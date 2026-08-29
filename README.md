@@ -63,6 +63,46 @@ forge test
 cd keeper && npm ci
 ```
 
+## Verify on Blockscout
+
+Robinhood Chain uses **Blockscout** (not Etherscan). Run from your Mac in the repo:
+
+```bash
+chmod +x script/verify.sh
+./script/verify.sh
+```
+
+Or manually:
+
+```bash
+forge verify-contract 0x6Abb1E02903ea1a8Cd7F9A148E66D3cbD6cb4e69 \
+  src/MsftHolderDistributor.sol:MsftHolderDistributor \
+  --chain-id 4663 \
+  --verifier blockscout \
+  --verifier-url https://robinhoodchain.blockscout.com/api/ \
+  --constructor-args $(cast abi-encode "constructor(address,address)" \
+    0x374D91a5674Fa7Cf86E725093b5848b97e1e13b4 \
+    0x6eb052b25399809F858Dc1B69b8Ff9225aE44b54) \
+  --watch
+
+forge verify-contract 0x22492f09e63f6893b0a16F14dd5aDA5CbedC5407 \
+  src/DevMsftFeeRouter.sol:DevMsftFeeRouter \
+  --chain-id 4663 \
+  --verifier blockscout \
+  --verifier-url https://robinhoodchain.blockscout.com/api/ \
+  --constructor-args $(cast abi-encode "constructor(address,address,address,address,uint256)" \
+    0x80Db362eAB104Ec378E19D0a3dCD5E84Bafd4bA3 \
+    0xe93237C50D904957Cf27E7B1133b510C669c2e74 \
+    0x6Abb1E02903ea1a8Cd7F9A148E66D3cbD6cb4e69 \
+    0xeFC8591519a2D8885C1b62C7de84ce906F22Fa78 \
+    2175984000) \
+  --watch
+```
+
+Compiler settings must match deploy: **Solidity 0.8.26**, **optimizer on (200 runs)**, **via_ir = true** (see `foundry.toml`).
+
+**Manual fallback:** open each contract on Blockscout → **Contract** tab → **Verify & publish** → paste source + constructor args above.
+
 ## Token constants
 
 | | Address |
