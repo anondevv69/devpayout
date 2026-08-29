@@ -17,6 +17,11 @@ Same pattern as Bankr Prompt on Base; this repo is standalone (contracts + Railw
 ## Deploy
 
 ```bash
+git clone --recurse-submodules https://github.com/anondevv69/devpayout.git
+cd devpayout
+# If you already cloned without submodules:
+# git submodule update --init --recursive
+
 export ROBINHOOD_RPC_URL=https://rpc.mainnet.chain.robinhood.com
 export DEPLOYER_KEY=0x...
 export DEV_TOKEN=0x80Db362eAB104Ec378E19D0a3dCD5E84Bafd4bA3
