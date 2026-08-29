@@ -1,0 +1,14 @@
+{
+  "name": "devpayout-keeper",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "viem": "^2.33.0"
+  }
+}

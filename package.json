@@ -1,0 +1,8 @@
+{
+  "name": "devpayout",
+  "private": true,
+  "scripts": {
+    "start": "npm start --prefix keeper",
+    "test": "forge test"
+  }
+}

@@ -1,0 +1,9 @@
+cache/
+out/
+lib/
+.env
+.env.*
+!.env.example
+!keeper/.env.example
+keeper/node_modules/
+node_modules/
