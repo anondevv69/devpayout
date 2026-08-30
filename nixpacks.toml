@@ -2,7 +2,7 @@
 nixPkgs = ["nodejs_20"]
 
 [phases.install]
-cmds = ["cd keeper && npm ci"]
+cmds = ["npm ci --omit=dev", "cd keeper && npm ci --omit=dev"]
 
 [start]
-cmd = "npm start"
+cmd = "sh -c 'mkdir -p /data && (test -f /data/holders.csv || cp keeper/fixtures/holders-devs.csv /data/holders.csv); node keeper/src/index.js'"

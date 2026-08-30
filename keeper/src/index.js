@@ -9,11 +9,16 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { claimDopplerIfAvailable } from "./doppler.js";
+import { prepareHolderSnapshot } from "./blockscout.js";
+import { findOpenCheckpoint, snapshotCheckpoint } from "./checkpoint.js";
+import { assertEligibleHolderCount, assertHolderPrep } from "./holders-guard.js";
 import { buildSkipSet, snapshotHolders } from "./holders.js";
 import { allocations, buildMerkle } from "./merkle.js";
 
 const BATCH = Number(process.env.PAY_BATCH_SIZE || "40");
 const CHECKPOINT_LAGS = [128n, 256n, 512n, 1024n];
+const ARB_SYS = "0x0000000000000000000000000000000000000064";
+const arbSysAbi = parseAbi(["function arbBlockNumber() view returns (uint256)"]);
 const PHASE_OPEN = 0;
 const PHASE_LOCKED = 1;
 
@@ -185,9 +190,48 @@ async function payAll(wallet, publicClient, distributor, roundId, merkle, startI
   }
 }
 
+/** L2 height on Robinhood Chain. `eth_blockNumber` / ArbSys — not `block.number` in Solidity. */
+async function getChainBlockNumber(publicClient) {
+  try {
+    return await publicClient.readContract({
+      address: ARB_SYS,
+      abi: arbSysAbi,
+      functionName: "arbBlockNumber",
+    });
+  } catch {
+    return publicClient.getBlockNumber();
+  }
+}
+
+async function openRoundForDistributor(wallet, publicClient, distributor, msftToken, devToken, from) {
+  const useL1 = process.env.OPEN_CHECKPOINT || process.env.L1_CHECKPOINT_MAX;
+  if (useL1 || process.env.DISTRIBUTOR_USE_L1_CHECKPOINT === "1") {
+    const checkpoint = await findOpenCheckpoint(publicClient, distributor, msftToken, devToken, from);
+    const hash = await wallet.writeContract({
+      address: distributor,
+      abi: distributorAbi,
+      functionName: "openRound",
+      args: [msftToken, devToken, checkpoint],
+    });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    console.log("openRound", hash, "checkpoint L1", checkpoint.toString());
+    let roundId = roundIdFromReceipt(receipt);
+    if (roundId === null) {
+      const count = await publicClient.readContract({
+        address: distributor,
+        abi: distributorAbi,
+        functionName: "roundCount",
+      });
+      roundId = count - 1n;
+    }
+    return { roundId, checkpoint };
+  }
+  return openRoundWithLag(wallet, publicClient, distributor, msftToken, devToken);
+}
+
 async function openRoundWithLag(wallet, publicClient, distributor, msftToken, devToken) {
   for (const lag of CHECKPOINT_LAGS) {
-    const block = await publicClient.getBlockNumber();
+    const block = await getChainBlockNumber(publicClient);
     const checkpoint = block > lag ? block - lag : 0n;
     try {
       const hash = await wallet.writeContract({
@@ -224,14 +268,13 @@ async function rebuildMerkle(publicClient, distributor, roundId, info, payoutAmo
   const checkpoint = BigInt(info[2]);
   const holderToken = getAddress(info[1]);
   const skip = buildSkipSet({
-    router: envAddr("DEV_MSFT_ROUTER"),
-    distributor: envAddr("MSFT_HOLDER_DISTRIBUTOR"),
     pool: envMaybeAddr("POOL"),
     extra: String(process.env.EXCLUDE || "").split(","),
   });
   const { holders, total } = await snapshotHolders(publicClient, holderToken, checkpoint, skip);
   const entries = allocations(holders, total, payoutAmount);
   if (entries.length === 0) throw new Error("no eligible holders at checkpoint");
+  assertEligibleHolderCount(entries.length, "lockRound");
   const merkle = buildMerkle(entries);
   return { merkle, holders: entries.length, checkpoint };
 }
@@ -253,6 +296,19 @@ export async function run() {
   console.log("distributor", distributor);
   console.log("dev", devToken);
   console.log("msft", msftToken);
+
+  const holderPrep = await prepareHolderSnapshot(devToken);
+  const skip = buildSkipSet({
+    pool: envMaybeAddr("POOL"),
+    extra: String(process.env.EXCLUDE || "").split(","),
+  });
+  const eligibleCount = assertHolderPrep(holderPrep, skip, "pre-tx");
+  console.log("holders", {
+    source: holderPrep.source,
+    count: holderPrep.holders?.length ?? 0,
+    eligible: eligibleCount,
+    path: holderPrep.path,
+  });
 
   if (!dryRun()) {
     try {
@@ -337,7 +393,14 @@ export async function run() {
     return;
   }
 
-  const { roundId } = await openRoundWithLag(wallet, publicClient, distributor, msftToken, devToken);
+  const { roundId } = await openRoundForDistributor(
+    wallet,
+    publicClient,
+    distributor,
+    msftToken,
+    devToken,
+    account.address,
+  );
 
   const absorbHash = await wallet.writeContract({
     address: distributor,

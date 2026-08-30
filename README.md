@@ -3,7 +3,7 @@
 Doppler fee flywheel for **DEVS** on Robinhood Chain (`4663`):
 
 - **DEVS** trading fees → locked 69 years in `TimeLockVault`
-- **MSFT** paired fees → daily pro-rata push to DEVS holders
+- **MSFT** paired fees → daily equal split to every DEVS holder (1 share each)
 
 Same pattern as Bankr Prompt on Base; this repo is standalone (contracts + Railway keeper).
 
@@ -55,6 +55,9 @@ New Railway project → connect `anondevv69/devpayout` → root directory `/` (d
 | `DEV_MSFT_ROUTER` | deployed router |
 | `MSFT_HOLDER_DISTRIBUTOR` | deployed distributor |
 | `POOL` | LP/pool address to exclude from snapshots |
+| `BLOCKSCOUT_API_KEY` | Free key from [dev.blockscout.com](https://dev.blockscout.com) — required for holder auto-refresh |
+| `BLOCKSCOUT_CHAIN_ID` | `4663` (Robinhood Chain) |
+| `HOLDERS_CACHE_PATH` | `/data/holders.csv` on Railway volume (optional) |
 
 ## Tests
 

@@ -6,7 +6,11 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test-holders": "node src/test-holders.js",
+    "rescue": "node src/rescue-stuck-msft.js",
+    "validate-holders": "node src/validate-holders.js",
+    "fetch-holders": "node src/fetch-holders.js"
   },
   "dependencies": {
     "viem": "^2.33.0"

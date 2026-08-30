@@ -42,12 +42,21 @@ export function buildMerkle(entries) {
   return { root: layers[layers.length - 1][0], leaves, proofs };
 }
 
-export function allocations(holders, total, payoutAmount) {
-  if (total === 0n) return [];
-  const out = [];
-  for (const h of holders) {
-    const amt = (payoutAmount * h.amt) / total;
-    if (amt > 0n) out.push({ who: h.who, amt });
-  }
-  return out;
+/**
+ * Equal MSFT per DEVS holder — one share each.
+ * DEVS balance only determines eligibility (must hold > 0), not payout size.
+ * Integer remainder is spread 1 wei across the first `remainder` holders.
+ */
+export function allocations(holders, _total, payoutAmount) {
+  const n = holders.length;
+  if (n === 0) return [];
+  const count = BigInt(n);
+  const base = payoutAmount / count;
+  const rem = payoutAmount % count;
+  return holders
+    .map((h, i) => ({
+      who: h.who,
+      amt: base + (BigInt(i) < rem ? 1n : 0n),
+    }))
+    .filter((e) => e.amt > 0n);
 }
