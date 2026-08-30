@@ -1,6 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getAddress } from "viem";
+import {
+  downloadHoldersRobinscan,
+  loadHoldersRobinscanCache,
+  requireRobinscan,
+} from "./robinscan.js";
 
 const DEFAULT_INSTANCE = "https://robinhoodchain.blockscout.com";
 const DEFAULT_PRO_API = "https://api.blockscout.com";
@@ -199,15 +204,45 @@ export async function fetchHoldersFromBlockscout(token) {
   return holders;
 }
 
+function holderSource() {
+  return String(process.env.HOLDERS_SOURCE || "robinscan").toLowerCase();
+}
+
+async function prepareRobinscanSnapshot(token) {
+  try {
+    const { path: p, holders } = await downloadHoldersRobinscan(token);
+    return storePrepared(token, { source: "robinscan-fresh", path: p, holders });
+  } catch (e) {
+    console.log("robinscan fetch failed:", String(e?.message || e));
+  }
+
+  const cached = loadHoldersRobinscanCache(token);
+  if (cached) {
+    console.log("holders: using stale robinscan cache", cached.path, "count", cached.holders.length);
+    return storePrepared(token, { source: "robinscan-stale-cache", path: cached.path, holders: cached.holders });
+  }
+
+  if (requireRobinscan()) {
+    throw new Error("could not fetch Robinscan holders and no cache exists");
+  }
+
+  preparedSnapshot = null;
+  return { source: "none", path: null, holders: null };
+}
+
 /**
  * Called at the start of each keeper/cron run.
- * Tries Blockscout PRO API (with BLOCKSCOUT_API_KEY), then stale cache.
+ * Default source: Robinscan. Set HOLDERS_SOURCE=blockscout to use Blockscout PRO API.
  */
 export async function prepareHolderSnapshot(token) {
   const manual = String(process.env.HOLDERS_CSV_PATH || "").trim();
   if (manual) {
     console.log("holders: using manual HOLDERS_CSV_PATH", manual);
     return storePrepared(token, { source: "manual", path: manual, holders: loadHoldersCsv(manual) });
+  }
+
+  if (holderSource() === "robinscan") {
+    return prepareRobinscanSnapshot(token);
   }
 
   if (!apiKey()) {
@@ -281,6 +316,9 @@ export async function snapshotHoldersFromBlockscout(token) {
 
   const manual = String(process.env.HOLDERS_CSV_PATH || "").trim();
   if (manual) return loadHoldersCsv(manual);
+
+  const robinscan = loadHoldersRobinscanCache(token);
+  if (robinscan) return robinscan.holders;
 
   const out = cachePath(token);
   if (fs.existsSync(out)) return loadHoldersCsv(out);

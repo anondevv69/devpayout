@@ -10,7 +10,7 @@ export function assertEligibleHolderCount(count, context = "payout") {
     throw new Error(
       `${context}: only ${count} eligible holders (need >= ${min}). ` +
         "Aborting — will not route, openRound, or lockRound with a partial wallet list. " +
-        "Blockscout API/CSV must return the full holder set.",
+        "Holder snapshot must return the full eligible set.",
     );
   }
 }
@@ -19,7 +19,7 @@ export function assertEligibleHolderCount(count, context = "payout") {
 export function assertHolderPrep(prep, skip, context = "startup") {
   if (!prep?.holders?.length) {
     throw new Error(
-      `${context}: Blockscout holder snapshot is empty (source=${prep?.source ?? "none"}). ` +
+      `${context}: holder snapshot is empty (source=${prep?.source ?? "none"}). ` +
         "Aborting before any on-chain transaction.",
     );
   }

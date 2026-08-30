@@ -1,5 +1,6 @@
 import { getAddress, parseAbi, parseAbiItem } from "viem";
 import { snapshotHoldersFromBlockscout } from "./blockscout.js";
+import { requireRobinscan } from "./robinscan.js";
 
 const transferEvent = parseAbiItem(
   "event Transfer(address indexed from, address indexed to, uint256 value)",
@@ -145,12 +146,13 @@ async function replayBalances(publicClient, token, checkpoint, skip, fromBlock) 
 
 /**
  * Holder snapshot for MSFT payouts.
- * Prefers Blockscout (full index). Falls back to RPC balanceOf on transfer participants.
+ * Prefers explorer index (Robinscan or Blockscout). Falls back to RPC balanceOf on transfer participants.
  */
 export async function snapshotHolders(publicClient, token, checkpoint, skip, fromBlock = parseFromBlock()) {
-  const useBlockscout = process.env.HOLDERS_SOURCE !== "rpc";
+  const source = String(process.env.HOLDERS_SOURCE || "robinscan").toLowerCase();
+  const useExplorer = source !== "rpc";
 
-  if (useBlockscout) {
+  if (useExplorer) {
     try {
       const raw = await snapshotHoldersFromBlockscout(token);
       const holders = [];
@@ -161,22 +163,23 @@ export async function snapshotHolders(publicClient, token, checkpoint, skip, fro
         total += h.amt;
       }
       console.log("snapshotHolders", {
-        method: "blockscout",
+        method: source,
         checkpoint: checkpoint.toString(),
         holders: holders.length,
         sourceTotal: raw.length,
       });
       if (holders.length > 0) return { holders, total, balanceBlock: checkpoint, useLatest: true };
     } catch (e) {
-      console.log("blockscout snapshot failed:", String(e?.message || e));
-      const strict =
+      console.log(`${source} snapshot failed:`, String(e?.message || e));
+      const strictRobinscan = requireRobinscan();
+      const strictBlockscout =
         process.env.REQUIRE_BLOCKSCOUT === "1" ||
         (process.env.REQUIRE_BLOCKSCOUT !== "0" && Boolean(process.env.BLOCKSCOUT_API_KEY));
-      if (strict) throw e;
+      if (strictRobinscan || (source === "blockscout" && strictBlockscout)) throw e;
     }
   }
 
-  if (process.env.HOLDERS_SOURCE !== "rpc" && process.env.BLOCKSCOUT_API_KEY) {
+  if (source === "blockscout" && process.env.BLOCKSCOUT_API_KEY) {
     throw new Error("Blockscout holder snapshot required but unavailable — refusing RPC fallback");
   }
 
