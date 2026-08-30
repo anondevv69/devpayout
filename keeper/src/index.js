@@ -107,13 +107,45 @@ async function tokenBalance(publicClient, token, holder) {
   });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimited(err) {
+  const msg = String(err?.shortMessage || err?.message || err?.details || err?.cause?.message || err);
+  return (
+    msg.includes("Too Many Requests") ||
+    msg.includes("429") ||
+    msg.includes("rate limit") ||
+    msg.includes("over rate limit")
+  );
+}
+
+async function withRpcRetry(label, fn, attempts = 5) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (!isRateLimited(e) || i === attempts - 1) throw e;
+      const wait = 1000 * (i + 1);
+      console.log("rpc retry", label, { attempt: i + 1, wait });
+      await sleep(wait);
+    }
+  }
+  throw lastErr;
+}
+
 async function readRoundInfo(publicClient, distributor, roundId) {
-  return publicClient.readContract({
-    address: distributor,
-    abi: distributorAbi,
-    functionName: "roundInfo",
-    args: [roundId],
-  });
+  return withRpcRetry(`roundInfo(${roundId})`, () =>
+    publicClient.readContract({
+      address: distributor,
+      abi: distributorAbi,
+      functionName: "roundInfo",
+      args: [roundId],
+    }),
+  );
 }
 
 function roundIdFromReceipt(receipt) {
@@ -167,12 +199,16 @@ function skipRoundIds() {
 
 async function findActiveRound(publicClient, distributor, msftToken) {
   const skip = skipRoundIds();
-  const count = await publicClient.readContract({
-    address: distributor,
-    abi: distributorAbi,
-    functionName: "roundCount",
-  });
-  for (let roundId = count - 1n; roundId >= 0n; roundId--) {
+  const lookback = Math.max(1, Number(process.env.ACTIVE_ROUND_LOOKBACK || "4"));
+  const count = await withRpcRetry("roundCount", () =>
+    publicClient.readContract({
+      address: distributor,
+      abi: distributorAbi,
+      functionName: "roundCount",
+    }),
+  );
+  const start = count > BigInt(lookback) ? count - BigInt(lookback) : 0n;
+  for (let roundId = count - 1n; roundId >= start; roundId--) {
     if (skip.has(roundId)) {
       console.log("skip round", roundId.toString());
       continue;
@@ -188,6 +224,7 @@ async function findActiveRound(publicClient, distributor, msftToken) {
     if (phase === PHASE_LOCKED && paidCount < recipientCount) {
       return { roundId, phase, info, paidCount, recipientCount };
     }
+    await sleep(150);
   }
   return null;
 }
