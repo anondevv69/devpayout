@@ -11,4 +11,4 @@ RUN npm run build
 ENV NODE_ENV=production
 EXPOSE 3000
 
-CMD ["npm", "start", "--", "--port", "3000"]
+CMD ["npm", "start"]
