@@ -3,6 +3,7 @@ import {
   createWalletClient,
   decodeEventLog,
   fallback,
+  formatEther,
   getAddress,
   http,
   parseAbi,
@@ -14,6 +15,9 @@ import { findOpenCheckpoint, snapshotCheckpoint } from "./checkpoint.js";
 import { assertEligibleHolderCount, assertHolderPrep } from "./holders-guard.js";
 import { buildSkipSet, snapshotHolders } from "./holders.js";
 import { allocationSummary, allocations, buildMerkle } from "./merkle.js";
+import { loadHoldersCsv } from "./holders-csv.js";
+import { loadRoundMerkle, saveRoundMerkle } from "./merkle-cache.js";
+import fs from "node:fs";
 
 const BATCH = Number(process.env.PAY_BATCH_SIZE || "40");
 const CHECKPOINT_LAGS = [128n, 256n, 512n, 1024n];
@@ -149,13 +153,30 @@ async function routeFees(wallet, publicClient, router) {
   }
 }
 
+function skipRoundIds() {
+  const raw = String(process.env.SKIP_ROUND_IDS || "").trim();
+  if (!raw) return new Set();
+  return new Set(
+    raw
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .map((x) => BigInt(x)),
+  );
+}
+
 async function findActiveRound(publicClient, distributor, msftToken) {
+  const skip = skipRoundIds();
   const count = await publicClient.readContract({
     address: distributor,
     abi: distributorAbi,
     functionName: "roundCount",
   });
   for (let roundId = count - 1n; roundId >= 0n; roundId--) {
+    if (skip.has(roundId)) {
+      console.log("skip round", roundId.toString());
+      continue;
+    }
     const info = await readRoundInfo(publicClient, distributor, roundId);
     if (getAddress(info[0]) !== getAddress(msftToken)) continue;
     const phase = Number(info[8]);
@@ -171,22 +192,59 @@ async function findActiveRound(publicClient, distributor, msftToken) {
   return null;
 }
 
+async function assertKeeperGas(publicClient, account, batches = 1) {
+  const [balance, gasPrice] = await Promise.all([
+    publicClient.getBalance({ address: account.address }),
+    publicClient.getGasPrice(),
+  ]);
+  // ~1.1M gas per 40-recipient payBatch on Robinhood Chain; add headroom for absorb/lock.
+  const gasPerBatch = BigInt(process.env.PAY_BATCH_GAS || "1200000");
+  const needed = gasPrice * gasPerBatch * BigInt(batches);
+  if (balance < needed) {
+    throw new Error(
+      `keeper low on ETH: have ${formatEther(balance)}, need ~${formatEther(needed)} for ${batches} payBatch tx(s). ` +
+        `Send ETH to ${account.address} then re-run.`,
+    );
+  }
+  return { balance, gasPrice };
+}
+
 async function payAll(wallet, publicClient, distributor, roundId, merkle, startIndex = 0) {
+  const account = wallet.account;
+  const remaining = merkle.leaves.length - startIndex;
+  const batches = Math.ceil(remaining / BATCH);
+  await assertKeeperGas(publicClient, account, batches);
+
   for (let i = startIndex; i < merkle.leaves.length; i += BATCH) {
     const slice = merkle.leaves.slice(i, i + BATCH);
+    const args = [
+      roundId,
+      slice.map((l) => l.who),
+      slice.map((l) => l.amt),
+      merkle.proofs.slice(i, i + BATCH),
+    ];
+    let gas;
+    try {
+      gas = await publicClient.estimateContractGas({
+        account,
+        address: distributor,
+        abi: distributorAbi,
+        functionName: "payBatch",
+        args,
+      });
+    } catch (e) {
+      throw new Error(`payBatch gas estimate failed at index ${i}: ${String(e?.shortMessage || e?.message || e)}`);
+    }
+    const gasLimit = (gas * 130n) / 100n;
     const hash = await wallet.writeContract({
       address: distributor,
       abi: distributorAbi,
       functionName: "payBatch",
-      args: [
-        roundId,
-        slice.map((l) => l.who),
-        slice.map((l) => l.amt),
-        merkle.proofs.slice(i, i + BATCH),
-      ],
+      args,
+      gas: gasLimit,
     });
     await publicClient.waitForTransactionReceipt({ hash });
-    console.log("payBatch", hash, "paid", slice.length);
+    console.log("payBatch", hash, "paid", slice.length, "gas", gasLimit.toString());
   }
 }
 
@@ -264,7 +322,7 @@ async function openRoundWithLag(wallet, publicClient, distributor, msftToken, de
   throw new Error("openRound failed: BadCheckpoint after lag retries");
 }
 
-async function rebuildMerkle(publicClient, distributor, roundId, info, payoutAmount) {
+async function rebuildMerkle(publicClient, _distributor, _roundId, info, payoutAmount) {
   const checkpoint = BigInt(info[2]);
   const holderToken = getAddress(info[1]);
   const skip = buildSkipSet({
@@ -279,6 +337,73 @@ async function rebuildMerkle(publicClient, distributor, roundId, info, payoutAmo
   assertEligibleHolderCount(holders.length, "lockRound");
   const merkle = buildMerkle(entries);
   return { merkle, holders: entries.length, checkpoint };
+}
+
+async function merkleFromHoldersCsv(csvPath, info, payoutAmount, lockedRoot) {
+  if (!csvPath || !fs.existsSync(csvPath)) return null;
+  const checkpoint = BigInt(info[2]);
+  const holderToken = getAddress(info[1]);
+  const skip = buildSkipSet({
+    pool: envMaybeAddr("POOL"),
+    extra: String(process.env.EXCLUDE || "").split(","),
+  });
+  const raw = loadHoldersCsv(csvPath);
+  const holders = [];
+  let total = 0n;
+  for (const h of raw) {
+    if (skip.has(h.who.toLowerCase())) continue;
+    holders.push(h);
+    total += h.amt;
+  }
+  console.log("merkle from csv", { path: csvPath, holders: holders.length, checkpoint: checkpoint.toString() });
+  const summary = allocationSummary(holders, total, payoutAmount);
+  const entries = allocations(holders, total, payoutAmount, summary.mode);
+  const merkle = buildMerkle(entries);
+  if (lockedRoot && merkle.root !== lockedRoot) return null;
+  return { merkle, holders: entries.length, checkpoint };
+}
+
+async function merkleForRound(publicClient, roundId, info, payoutAmount, lockedRoot = null) {
+  const cached = loadRoundMerkle(roundId);
+  if (cached && (!lockedRoot || cached.root === lockedRoot)) {
+    console.log("merkle from cache", { roundId: roundId.toString(), leaves: cached.leaves.length });
+    return { merkle: cached, fromCache: true };
+  }
+
+  const csvCandidates = [
+    `/data/rounds/round-${roundId}-holders.csv`,
+    String(process.env.HOLDERS_CSV_PATH || "").trim(),
+    String(process.env.HOLDERS_CACHE_PATH || "/data/holders.csv").trim() + ".bak",
+    "/data/holders.csv.bak",
+  ].filter(Boolean);
+  for (const csvPath of [...new Set(csvCandidates)]) {
+    const fromCsv = await merkleFromHoldersCsv(csvPath, info, payoutAmount, lockedRoot);
+    if (fromCsv) {
+      saveRoundMerkle(roundId, fromCsv.merkle, { source: csvPath });
+      return { merkle: fromCsv.merkle, fromCache: true };
+    }
+  }
+
+  const rebuilt = await rebuildMerkle(publicClient, null, roundId, info, payoutAmount);
+  if (lockedRoot && rebuilt.merkle.root !== lockedRoot) {
+    throw new Error(
+      `merkle root mismatch on resume: expected ${lockedRoot}, got ${rebuilt.merkle.root}. ` +
+        `Holder snapshot changed since lockRound. Run recover-round-merkle.js or restore round-${roundId}-holders.csv.`,
+    );
+  }
+  return { merkle: rebuilt.merkle, fromCache: false, holders: rebuilt.holders, checkpoint: rebuilt.checkpoint };
+}
+
+function archiveHoldersCsv(roundId, csvPath) {
+  if (!csvPath || !fs.existsSync(csvPath)) return;
+  const dest = `/data/rounds/round-${roundId}-holders.csv`;
+  try {
+    fs.mkdirSync("/data/rounds", { recursive: true });
+    fs.copyFileSync(csvPath, dest);
+    console.log("holders archived", dest);
+  } catch (e) {
+    console.log("holders archive skipped:", String(e?.message || e));
+  }
 }
 
 export async function run() {
@@ -298,6 +423,27 @@ export async function run() {
   console.log("distributor", distributor);
   console.log("dev", devToken);
   console.log("msft", msftToken);
+
+  const active = await findActiveRound(publicClient, distributor, msftToken);
+
+  // Locked rounds must resume from cached merkle — never rebuild from a fresh Robinscan pull.
+  if (active?.phase === PHASE_LOCKED && active.paidCount < active.recipientCount) {
+    const payoutAmount = BigInt(active.info[5]);
+    const lockedRoot = active.info[7];
+    console.log("resume locked round", active.roundId.toString(), active.paidCount, "/", active.recipientCount);
+    const { merkle } = await merkleForRound(
+      publicClient,
+      active.roundId,
+      active.info,
+      payoutAmount,
+      lockedRoot,
+    );
+    if (!dryRun()) {
+      await payAll(wallet, publicClient, distributor, active.roundId, merkle, active.paidCount);
+    }
+    console.log("done resume round", active.roundId.toString());
+    return;
+  }
 
   const holderPrep = await prepareHolderSnapshot(devToken);
   const skip = buildSkipSet({
@@ -321,22 +467,6 @@ export async function run() {
     await routeFees(wallet, publicClient, router);
   } else {
     console.log("dryRun doppler claim + route");
-  }
-
-  const active = await findActiveRound(publicClient, distributor, msftToken);
-  if (active?.phase === PHASE_LOCKED) {
-    const payoutAmount = BigInt(active.info[5]);
-    const lockedRoot = active.info[7];
-    console.log("resume locked round", active.roundId.toString(), active.paidCount, "/", active.recipientCount);
-    const { merkle } = await rebuildMerkle(publicClient, distributor, active.roundId, active.info, payoutAmount);
-    if (merkle.root !== lockedRoot) {
-      throw new Error(`merkle root mismatch on resume: expected ${lockedRoot}, got ${merkle.root}`);
-    }
-    if (!dryRun()) {
-      await payAll(wallet, publicClient, distributor, active.roundId, merkle, active.paidCount);
-    }
-    console.log("done resume round", active.roundId.toString());
-    return;
   }
 
   if (active?.phase === PHASE_OPEN) {
@@ -379,6 +509,8 @@ export async function run() {
     });
     await publicClient.waitForTransactionReceipt({ hash: lockHash });
     console.log("lockRound", lockHash);
+    saveRoundMerkle(active.roundId, merkle, { payout: payoutAmount.toString() });
+    archiveHoldersCsv(active.roundId, holderPrep.path);
     await payAll(wallet, publicClient, distributor, active.roundId, merkle, 0);
     console.log("done round", active.roundId.toString());
     return;
@@ -437,6 +569,8 @@ export async function run() {
   });
   await publicClient.waitForTransactionReceipt({ hash: lockHash });
   console.log("lockRound", lockHash);
+  saveRoundMerkle(roundId, merkle, { payout: payoutAmount.toString() });
+  archiveHoldersCsv(roundId, holderPrep.path);
 
   await payAll(wallet, publicClient, distributor, roundId, merkle, 0);
   console.log("done round", roundId.toString());

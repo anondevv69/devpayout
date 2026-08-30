@@ -20,6 +20,10 @@ function writeCache(token, holders) {
   const out = cachePath(token);
   try {
     fs.mkdirSync(path.dirname(out), { recursive: true });
+    if (fs.existsSync(out)) {
+      const bak = `${out}.bak`;
+      fs.copyFileSync(out, bak);
+    }
     fs.writeFileSync(out, holdersToCsv(holders));
     return out;
   } catch (e) {
