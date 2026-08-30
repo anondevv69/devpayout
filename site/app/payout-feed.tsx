@@ -22,6 +22,10 @@ function formatMsft(hexValue: string) {
   return `${whole.toLocaleString()}${fraction ? `.${fraction}` : ""}`;
 }
 
+function formatUpdatedAt(date: Date) {
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+}
+
 async function rpc<T>(method: string, params: unknown[]) {
   const response = await fetch(RPC_URL, {
     method: "POST",
@@ -36,6 +40,7 @@ async function rpc<T>(method: string, params: unknown[]) {
 export default function PayoutFeed() {
   const [payouts, setPayouts] = useState<Payout[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const hasLoaded = useRef(false);
   const inFlight = useRef(false);
 
@@ -61,6 +66,7 @@ export default function PayoutFeed() {
         .sort((a, b) => b.block - a.block)
         .slice(0, 12);
       setPayouts(newest);
+      setLastUpdated(new Date());
       hasLoaded.current = true;
       setState("ready");
     } catch {
@@ -78,8 +84,8 @@ export default function PayoutFeed() {
 
   return <section className="section payouts" id="payouts">
     <div className="payout-head">
-      <div><p className="eyebrow"><span />Live payout ledger</p><h2>Latest <i>$MSFT</i><br />payments.</h2></div>
-      <div className="ledger-meta"><span className={state === "ready" ? "ledger-dot" : "ledger-dot waiting"} /> <span>{state === "ready" ? "Live · checks every minute" : "Connecting to the chain"}</span><button onClick={() => void load()} disabled={state === "loading"}>{state === "loading" ? "Loading" : "Refresh"}</button></div>
+      <div><p className="eyebrow"><span />Payout ledger</p><h2>Latest <i>$MSFT</i><br />payments.</h2></div>
+      <div className="ledger-meta"><span className={state === "ready" ? "ledger-dot" : "ledger-dot waiting"} /> <span>{state === "ready" && lastUpdated ? `Last updated ${formatUpdatedAt(lastUpdated)}` : "Loading payout activity"}</span></div>
     </div>
     <p className="payout-intro">Every row is an MSFT token transfer sent from the payout distributor to a holder. Tap any row to inspect its onchain receipt.</p>
     <div className="ledger" aria-live="polite">
