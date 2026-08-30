@@ -3,7 +3,7 @@
 Doppler fee flywheel for **DEVS** on Robinhood Chain (`4663`):
 
 - **DEVS** trading fees → locked 69 years in `TimeLockVault`
-- **MSFT** paired fees → daily equal split to every DEVS holder (1 share each)
+- **MSFT** paired fees → daily **pro-rata** split to DEVS holders (weighted by balance; Robinscan snapshot)
 
 Same pattern as Bankr Prompt on Base; this repo is standalone (contracts + Railway keeper).
 
@@ -43,7 +43,7 @@ Save `DEV_MSFT_ROUTER` and `MSFT_HOLDER_DISTRIBUTOR`.
 1. Transfer Doppler fee beneficiary → `DEV_MSFT_ROUTER` (Bankr UI or API)
 2. Set Railway env vars (`keeper/.env.example`)
 3. Deploy Railway from this repo (new project, root = repo root)
-4. Cron runs daily (`0 0 * * *` UTC): claim → route → snapshot → pay
+4. Cron runs daily (`0 0 * * *` UTC): claim → route → Robinscan snapshot → pro-rata pay
 
 ## Railway
 
@@ -55,9 +55,13 @@ New Railway project → connect `anondevv69/devpayout` → root directory `/` (d
 | `DEV_MSFT_ROUTER` | deployed router |
 | `MSFT_HOLDER_DISTRIBUTOR` | deployed distributor |
 | `POOL` | LP/pool address to exclude from snapshots |
-| `BLOCKSCOUT_API_KEY` | Free key from [dev.blockscout.com](https://dev.blockscout.com) — required for holder auto-refresh |
-| `BLOCKSCOUT_CHAIN_ID` | `4663` (Robinhood Chain) |
-| `HOLDERS_CACHE_PATH` | `/data/holders.csv` on Railway volume (optional) |
+| `HOLDERS_SOURCE` | `robinscan` (default) |
+| `REQUIRE_ROBINSCAN` | `1` |
+| `HOLDERS_CACHE_PATH` | `/data/holders.csv` on Railway volume |
+| `ALLOCATION_MODE` | `pro_rata` (default) |
+| `MIN_ELIGIBLE_HOLDERS` | `380` |
+| `OPEN_CHECKPOINT` | `25866117` (L1 checkpoint for distributor) |
+| `DISTRIBUTOR_USE_L1_CHECKPOINT` | `1` |
 
 ## Tests
 

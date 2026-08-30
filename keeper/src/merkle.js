@@ -44,14 +44,15 @@ export function buildMerkle(entries) {
 
 /** @returns {"equal" | "pro_rata"} */
 export function allocationMode() {
-  const mode = String(process.env.ALLOCATION_MODE || "equal").toLowerCase();
+  const mode = String(process.env.ALLOCATION_MODE || "pro_rata").toLowerCase();
+  if (mode === "equal") return "equal";
   if (mode === "pro_rata" || mode === "prorata" || mode === "pro-rata") return "pro_rata";
-  return "equal";
+  return "pro_rata";
 }
 
 /**
- * Equal: one MSFT share per DEVS holder (default).
- * Pro-rata: MSFT weighted by DEVS balance at checkpoint; holders below 1 wei are omitted.
+ * Pro-rata (default): MSFT weighted by DEVS balance at checkpoint.
+ * Equal: one MSFT share per DEVS holder (set ALLOCATION_MODE=equal).
  */
 export function allocations(holders, total, payoutAmount, mode = allocationMode()) {
   const n = holders.length;
