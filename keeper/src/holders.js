@@ -1,5 +1,5 @@
 import { getAddress, parseAbi, parseAbiItem } from "viem";
-import { snapshotHoldersFromBlockscout } from "./blockscout.js";
+import { snapshotHoldersFromPrepared } from "./holders-snapshot.js";
 import { requireRobinscan } from "./robinscan.js";
 
 const transferEvent = parseAbiItem(
@@ -154,7 +154,7 @@ export async function snapshotHolders(publicClient, token, checkpoint, skip, fro
 
   if (useExplorer) {
     try {
-      const raw = await snapshotHoldersFromBlockscout(token);
+      const raw = await snapshotHoldersFromPrepared(token);
       const holders = [];
       let total = 0n;
       for (const h of raw) {

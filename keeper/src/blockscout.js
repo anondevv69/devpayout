@@ -1,11 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getAddress } from "viem";
-import {
-  downloadHoldersRobinscan,
-  loadHoldersRobinscanCache,
-  requireRobinscan,
-} from "./robinscan.js";
+import { loadHoldersCsv, parseHoldersCsv } from "./holders-csv.js";
 
 const DEFAULT_INSTANCE = "https://robinhoodchain.blockscout.com";
 const DEFAULT_PRO_API = "https://api.blockscout.com";
@@ -31,75 +27,20 @@ function cachePath(token) {
   const custom = String(process.env.HOLDERS_CACHE_PATH || "").trim();
   if (custom) return custom;
   const dir = String(process.env.HOLDERS_CACHE_DIR || ".cache").trim();
-  return path.join(dir, `holders-${getAddress(token).toLowerCase()}.csv`);
+  return path.join(dir, `holders-blockscout-${getAddress(token).toLowerCase()}.csv`);
 }
 
 function writeCache(token, text) {
   const primary = cachePath(token);
-  try {
-    fs.mkdirSync(path.dirname(primary), { recursive: true });
-    fs.writeFileSync(primary, text);
-    return primary;
-  } catch (e) {
-    const fallback = path.join(
-      String(process.env.HOLDERS_CACHE_DIR || ".cache").trim(),
-      `holders-${getAddress(token).toLowerCase()}.csv`,
-    );
-    console.log("cache write fallback", primary, "->", fallback, String(e?.message || e));
-    fs.mkdirSync(path.dirname(fallback), { recursive: true });
-    fs.writeFileSync(fallback, text);
-    return fallback;
-  }
-}
-
-/** In-memory holders from the latest prepareHolderSnapshot() call this process. */
-let preparedSnapshot = null;
-
-export function getPreparedHolders(token) {
-  const addr = getAddress(token);
-  if (preparedSnapshot?.token === addr && preparedSnapshot.holders?.length) {
-    return preparedSnapshot.holders;
-  }
-  return null;
+  fs.mkdirSync(path.dirname(primary), { recursive: true });
+  fs.writeFileSync(primary, text);
+  return primary;
 }
 
 function requireBlockscout() {
-  if (process.env.HOLDERS_SOURCE === "rpc") return false;
   if (process.env.REQUIRE_BLOCKSCOUT === "0" || process.env.REQUIRE_BLOCKSCOUT === "false") return false;
   if (process.env.REQUIRE_BLOCKSCOUT === "1") return true;
   return Boolean(apiKey());
-}
-
-function parseWei(value) {
-  const raw = String(value ?? "").trim();
-  if (!raw || raw === "0") return 0n;
-  if (raw.includes(".")) {
-    const [whole, frac = ""] = raw.split(".");
-    const fracPadded = (frac + "000000000000000000").slice(0, 18);
-    return BigInt(whole || "0") * 10n ** 18n + BigInt(fracPadded);
-  }
-  return BigInt(raw);
-}
-
-/** Parse Blockscout "Download CSV" export (HolderAddress,Balance). */
-export function parseHoldersCsv(text) {
-  const lines = String(text).trim().split(/\r?\n/);
-  if (lines.length < 2) return [];
-  const holders = [];
-  for (const line of lines.slice(1)) {
-    const i = line.lastIndexOf(",");
-    if (i < 1) continue;
-    const who = getAddress(line.slice(0, i).trim());
-    const amt = parseWei(line.slice(i + 1).trim());
-    if (amt > 0n) holders.push({ who, amt });
-  }
-  holders.sort((a, b) => (a.who < b.who ? -1 : a.who > b.who ? 1 : 0));
-  return holders;
-}
-
-export function loadHoldersCsv(filePath) {
-  const text = fs.readFileSync(filePath, "utf8");
-  return parseHoldersCsv(text);
 }
 
 function authHeaders() {
@@ -120,7 +61,6 @@ function withApiKey(url) {
   return u.toString();
 }
 
-/** PRO API base when key is set; else per-instance explorer URL. */
 function holdersCsvUrl(token) {
   const addr = getAddress(token);
   if (apiKey()) {
@@ -155,7 +95,6 @@ async function fetchJson(url) {
   return res.json();
 }
 
-/** Download CSV from a custom URL (e.g. GitHub raw, S3) and save to cache. */
 export async function downloadHoldersCsvFromUrl(token, url) {
   console.log("holders url download", url);
   const text = await fetchText(url);
@@ -165,7 +104,6 @@ export async function downloadHoldersCsvFromUrl(token, url) {
   return { path: out, holders, text };
 }
 
-/** Download fresh CSV from Blockscout PRO API (or instance) and save to cache. */
 export async function downloadHoldersCsv(token) {
   const url = holdersCsvUrl(token);
   console.log("blockscout download", apiKey() ? "pro-api" : "instance", url.replace(apiKey(), "proapi_***"));
@@ -176,7 +114,6 @@ export async function downloadHoldersCsv(token) {
   return { path: out, holders, text };
 }
 
-/** Paginated JSON holder list from Blockscout v2 API. */
 export async function fetchHoldersFromBlockscout(token) {
   let url = holdersJsonUrl(token, "?items_count=50");
   const holders = [];
@@ -204,47 +141,8 @@ export async function fetchHoldersFromBlockscout(token) {
   return holders;
 }
 
-function holderSource() {
-  return String(process.env.HOLDERS_SOURCE || "robinscan").toLowerCase();
-}
-
-async function prepareRobinscanSnapshot(token) {
-  try {
-    const { path: p, holders } = await downloadHoldersRobinscan(token);
-    return storePrepared(token, { source: "robinscan-fresh", path: p, holders });
-  } catch (e) {
-    console.log("robinscan fetch failed:", String(e?.message || e));
-  }
-
-  const cached = loadHoldersRobinscanCache(token);
-  if (cached) {
-    console.log("holders: using stale robinscan cache", cached.path, "count", cached.holders.length);
-    return storePrepared(token, { source: "robinscan-stale-cache", path: cached.path, holders: cached.holders });
-  }
-
-  if (requireRobinscan()) {
-    throw new Error("could not fetch Robinscan holders and no cache exists");
-  }
-
-  preparedSnapshot = null;
-  return { source: "none", path: null, holders: null };
-}
-
-/**
- * Called at the start of each keeper/cron run.
- * Default source: Robinscan. Set HOLDERS_SOURCE=blockscout to use Blockscout PRO API.
- */
-export async function prepareHolderSnapshot(token) {
-  const manual = String(process.env.HOLDERS_CSV_PATH || "").trim();
-  if (manual) {
-    console.log("holders: using manual HOLDERS_CSV_PATH", manual);
-    return storePrepared(token, { source: "manual", path: manual, holders: loadHoldersCsv(manual) });
-  }
-
-  if (holderSource() === "robinscan") {
-    return prepareRobinscanSnapshot(token);
-  }
-
+/** Opt-in Blockscout snapshot — set HOLDERS_SOURCE=blockscout to use. */
+export async function prepareBlockscoutSnapshot(token, { storePrepared }) {
   if (!apiKey()) {
     console.log("holders: BLOCKSCOUT_API_KEY not set — get a free key at https://dev.blockscout.com");
   }
@@ -285,43 +183,16 @@ export async function prepareHolderSnapshot(token) {
 
   if (fs.existsSync(out)) {
     const holders = loadHoldersCsv(out);
-    console.log("holders: using stale cache", out, "count", holders.length);
-    return storePrepared(token, { source: "stale-cache", path: out, holders });
+    console.log("holders: using stale blockscout cache", out, "count", holders.length);
+    return storePrepared(token, { source: "blockscout-stale-cache", path: out, holders });
   }
 
   if (requireBlockscout()) {
     throw new Error("could not fetch Blockscout holders and no cache exists");
   }
 
-  preparedSnapshot = null;
   return { source: "none", path: null, holders: null };
 }
 
-function storePrepared(token, result) {
-  if (result.holders?.length) {
-    preparedSnapshot = {
-      token: getAddress(token),
-      holders: result.holders,
-      source: result.source,
-      path: result.path,
-    };
-  }
-  return result;
-}
-
-/** Load holders for merkle build (uses in-memory + file cache from prepareHolderSnapshot). */
-export async function snapshotHoldersFromBlockscout(token) {
-  const mem = getPreparedHolders(token);
-  if (mem) return mem;
-
-  const manual = String(process.env.HOLDERS_CSV_PATH || "").trim();
-  if (manual) return loadHoldersCsv(manual);
-
-  const robinscan = loadHoldersRobinscanCache(token);
-  if (robinscan) return robinscan.holders;
-
-  const out = cachePath(token);
-  if (fs.existsSync(out)) return loadHoldersCsv(out);
-
-  throw new Error("no holder data — call prepareHolderSnapshot first");
-}
+// Re-export for legacy scripts.
+export { loadHoldersCsv, parseHoldersCsv };

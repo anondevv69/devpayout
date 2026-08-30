@@ -9,7 +9,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { claimDopplerIfAvailable } from "./doppler.js";
-import { prepareHolderSnapshot } from "./blockscout.js";
+import { prepareHolderSnapshot } from "./holders-snapshot.js";
 import { findOpenCheckpoint, snapshotCheckpoint } from "./checkpoint.js";
 import { assertEligibleHolderCount, assertHolderPrep } from "./holders-guard.js";
 import { buildSkipSet, snapshotHolders } from "./holders.js";

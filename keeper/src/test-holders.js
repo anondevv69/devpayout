@@ -2,7 +2,7 @@
  * Holder refresh smoke test — no chain txs, no KEEPER_KEY required.
  * Usage: npm run test-holders
  */
-import { prepareHolderSnapshot } from "./blockscout.js";
+import { prepareHolderSnapshot } from "./holders-snapshot.js";
 import { buildSkipSet } from "./holders.js";
 import { allocationSummary } from "./merkle.js";
 import { getAddress } from "viem";

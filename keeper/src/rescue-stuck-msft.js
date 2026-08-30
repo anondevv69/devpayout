@@ -21,7 +21,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { buildSkipSet, snapshotHolders } from "./holders.js";
-import { prepareHolderSnapshot } from "./blockscout.js";
+import { prepareHolderSnapshot } from "./holders-snapshot.js";
 import { findOpenCheckpoint, snapshotCheckpoint } from "./checkpoint.js";
 import { assertEligibleHolderCount, assertHolderPrep } from "./holders-guard.js";
 import { allocations, buildMerkle } from "./merkle.js";

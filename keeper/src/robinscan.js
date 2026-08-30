@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getAddress } from "viem";
+import { holdersToCsv, loadHoldersCsv } from "./holders-csv.js";
 
 const DEFAULT_BASE = "https://robinscan.io";
 
@@ -12,14 +13,14 @@ function cachePath(token) {
   const custom = String(process.env.HOLDERS_CACHE_PATH || "").trim();
   if (custom) return custom;
   const dir = String(process.env.HOLDERS_CACHE_DIR || ".cache").trim();
-  return path.join(dir, `holders-robinscan-${getAddress(token).toLowerCase()}.json`);
+  return path.join(dir, `holders-${getAddress(token).toLowerCase()}.csv`);
 }
 
 function writeCache(token, holders) {
   const out = cachePath(token);
   try {
     fs.mkdirSync(path.dirname(out), { recursive: true });
-    fs.writeFileSync(out, JSON.stringify({ holders, fetchedAt: new Date().toISOString() }, null, 0));
+    fs.writeFileSync(out, holdersToCsv(holders));
     return out;
   } catch (e) {
     console.log("robinscan cache write failed:", String(e?.message || e));
@@ -31,9 +32,9 @@ function loadCache(token) {
   const out = cachePath(token);
   if (!fs.existsSync(out)) return null;
   try {
-    const data = JSON.parse(fs.readFileSync(out, "utf8"));
-    if (!data?.holders?.length) return null;
-    return { path: out, holders: data.holders };
+    const holders = loadHoldersCsv(out);
+    if (!holders.length) return null;
+    return { path: out, holders };
   } catch {
     return null;
   }
@@ -80,24 +81,21 @@ export async function fetchHoldersFromRobinscan(token) {
 export function requireRobinscan() {
   if (process.env.REQUIRE_ROBINSCAN === "0" || process.env.REQUIRE_ROBINSCAN === "false") return false;
   if (process.env.REQUIRE_ROBINSCAN === "1") return true;
-  const source = String(process.env.HOLDERS_SOURCE || "robinscan").toLowerCase();
-  return source === "robinscan";
+  return holderSource() === "robinscan";
 }
 
-/** Fresh Robinscan snapshot; caches JSON locally for Railway volume. */
+function holderSource() {
+  return String(process.env.HOLDERS_SOURCE || "robinscan").toLowerCase();
+}
+
+/** Fresh Robinscan snapshot; writes Blockscout-compatible CSV to cache. */
 export async function downloadHoldersRobinscan(token) {
   const holders = await fetchHoldersFromRobinscan(token);
-  const p = writeCache(token, holders.map((h) => ({ who: h.who, amt: h.amt.toString() })));
-  const parsed = holders;
-  console.log("robinscan cached", { path: p, holders: parsed.length });
-  return { path: p, holders: parsed };
+  const p = writeCache(token, holders);
+  console.log("robinscan csv cached", { path: p, holders: holders.length });
+  return { path: p, holders };
 }
 
 export function loadHoldersRobinscanCache(token) {
-  const cached = loadCache(token);
-  if (!cached) return null;
-  return {
-    path: cached.path,
-    holders: cached.holders.map((h) => ({ who: getAddress(h.who), amt: BigInt(h.amt) })),
-  };
+  return loadCache(token);
 }
