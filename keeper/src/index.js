@@ -199,7 +199,6 @@ function skipRoundIds() {
 
 async function findActiveRound(publicClient, distributor, msftToken) {
   const skip = skipRoundIds();
-  const lookback = Math.max(1, Number(process.env.ACTIVE_ROUND_LOOKBACK || "4"));
   const count = await withRpcRetry("roundCount", () =>
     publicClient.readContract({
       address: distributor,
@@ -207,8 +206,21 @@ async function findActiveRound(publicClient, distributor, msftToken) {
       functionName: "roundCount",
     }),
   );
-  const start = count > BigInt(lookback) ? count - BigInt(lookback) : 0n;
-  for (let roundId = count - 1n; roundId >= start; roundId--) {
+  if (count === 0n) return null;
+
+  // SKIP_ROUND_IDS=11 means "abandon that round" — only check the latest round, not history.
+  const roundIds =
+    skip.size > 0
+      ? [count - 1n]
+      : (() => {
+          const lookback = Math.max(1, Number(process.env.ACTIVE_ROUND_LOOKBACK || "4"));
+          const start = count > BigInt(lookback) ? count - BigInt(lookback) : 0n;
+          const ids = [];
+          for (let id = count - 1n; id >= start; id--) ids.push(id);
+          return ids;
+        })();
+
+  for (const roundId of roundIds) {
     if (skip.has(roundId)) {
       console.log("skip round", roundId.toString());
       continue;
@@ -224,7 +236,6 @@ async function findActiveRound(publicClient, distributor, msftToken) {
     if (phase === PHASE_LOCKED && paidCount < recipientCount) {
       return { roundId, phase, info, paidCount, recipientCount };
     }
-    await sleep(150);
   }
   return null;
 }
