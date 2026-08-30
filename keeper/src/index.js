@@ -276,7 +276,7 @@ async function rebuildMerkle(publicClient, distributor, roundId, info, payoutAmo
   console.log("allocation", summary);
   const entries = allocations(holders, total, payoutAmount, summary.mode);
   if (entries.length === 0) throw new Error("no eligible holders at checkpoint");
-  assertEligibleHolderCount(entries.length, "lockRound");
+  assertEligibleHolderCount(holders.length, "lockRound");
   const merkle = buildMerkle(entries);
   return { merkle, holders: entries.length, checkpoint };
 }
