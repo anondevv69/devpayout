@@ -42,14 +42,29 @@ export function buildMerkle(entries) {
   return { root: layers[layers.length - 1][0], leaves, proofs };
 }
 
+/** @returns {"equal" | "pro_rata"} */
+export function allocationMode() {
+  const mode = String(process.env.ALLOCATION_MODE || "equal").toLowerCase();
+  if (mode === "pro_rata" || mode === "prorata" || mode === "pro-rata") return "pro_rata";
+  return "equal";
+}
+
 /**
- * Equal MSFT per DEVS holder — one share each.
- * DEVS balance only determines eligibility (must hold > 0), not payout size.
- * Integer remainder is spread 1 wei across the first `remainder` holders.
+ * Equal: one MSFT share per DEVS holder (default).
+ * Pro-rata: MSFT weighted by DEVS balance at checkpoint; holders below 1 wei are omitted.
  */
-export function allocations(holders, _total, payoutAmount) {
+export function allocations(holders, total, payoutAmount, mode = allocationMode()) {
   const n = holders.length;
   if (n === 0) return [];
+  if (mode === "pro_rata") {
+    if (total === 0n) throw new Error("total DEVS supply is zero");
+    return holders
+      .map((h) => ({
+        who: h.who,
+        amt: (h.amt * payoutAmount) / total,
+      }))
+      .filter((e) => e.amt > 0n);
+  }
   const count = BigInt(n);
   const base = payoutAmount / count;
   const rem = payoutAmount % count;
@@ -59,4 +74,19 @@ export function allocations(holders, _total, payoutAmount) {
       amt: base + (BigInt(i) < rem ? 1n : 0n),
     }))
     .filter((e) => e.amt > 0n);
+}
+
+export function allocationSummary(holders, total, payoutAmount, mode = allocationMode()) {
+  const entries = allocations(holders, total, payoutAmount, mode);
+  const allocated = entries.reduce((s, e) => s + e.amt, 0n);
+  const dust = payoutAmount - allocated;
+  return {
+    mode,
+    eligible: holders.length,
+    recipients: entries.length,
+    skippedZero: holders.length - entries.length,
+    payoutWei: payoutAmount,
+    allocatedWei: allocated,
+    dustWei: dust,
+  };
 }

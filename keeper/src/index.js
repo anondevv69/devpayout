@@ -13,7 +13,7 @@ import { prepareHolderSnapshot } from "./blockscout.js";
 import { findOpenCheckpoint, snapshotCheckpoint } from "./checkpoint.js";
 import { assertEligibleHolderCount, assertHolderPrep } from "./holders-guard.js";
 import { buildSkipSet, snapshotHolders } from "./holders.js";
-import { allocations, buildMerkle } from "./merkle.js";
+import { allocationSummary, allocations, buildMerkle } from "./merkle.js";
 
 const BATCH = Number(process.env.PAY_BATCH_SIZE || "40");
 const CHECKPOINT_LAGS = [128n, 256n, 512n, 1024n];
@@ -272,7 +272,9 @@ async function rebuildMerkle(publicClient, distributor, roundId, info, payoutAmo
     extra: String(process.env.EXCLUDE || "").split(","),
   });
   const { holders, total } = await snapshotHolders(publicClient, holderToken, checkpoint, skip);
-  const entries = allocations(holders, total, payoutAmount);
+  const summary = allocationSummary(holders, total, payoutAmount);
+  console.log("allocation", summary);
+  const entries = allocations(holders, total, payoutAmount, summary.mode);
   if (entries.length === 0) throw new Error("no eligible holders at checkpoint");
   assertEligibleHolderCount(entries.length, "lockRound");
   const merkle = buildMerkle(entries);
