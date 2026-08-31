@@ -8,6 +8,7 @@ const ROUND_COUNT_CALL = "0x127f0b3f";
 const ROUND_INFO_SELECTOR = "0x427f0b00";
 const ONE_MSFT = 10n ** 18n;
 const FULL_HOLDER_THRESHOLD = 100n;
+const LATEST_TRANSFERS_URL = "https://robinhoodchain.blockscout.com/address/0x6eb052b25399809F858Dc1B69b8Ff9225aE44b54?tab=txs";
 
 type Round = { id: number; recipientCount: bigint; paidCount: bigint; paidOut: bigint };
 type PayoutStats = { lastFullHolderPayout: Round | null; totalPaid: bigint; completedRoundCount: number };
@@ -104,7 +105,7 @@ export default function PayoutFeed() {
       <article className="payout-stat latest">
         <p>Last full-holder payout</p>
         <strong>{stats.lastFullHolderPayout ? formatMsft(stats.lastFullHolderPayout.paidOut) : "—"} <i>$MSFT</i></strong>
-        <span>{stats.lastFullHolderPayout ? `Round #${stats.lastFullHolderPayout.id} · ${stats.lastFullHolderPayout.recipientCount.toLocaleString()} holders paid` : "No completed payout round yet"}</span>
+        {stats.lastFullHolderPayout ? <a className="payout-round-link" href={LATEST_TRANSFERS_URL} target="_blank" rel="noreferrer">Round #{stats.lastFullHolderPayout.id} · {stats.lastFullHolderPayout.recipientCount.toLocaleString()} holders paid <b>View transfers ↗</b></a> : <span>No completed payout round yet</span>}
       </article>
       <article className="payout-stat">
         <p>Total paid out</p>
