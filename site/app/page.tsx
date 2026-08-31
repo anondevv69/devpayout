@@ -20,14 +20,14 @@ export default function Home() {
       <h1>Hold <i>$DEVS</i>.<br />Receive <em>$MSFT</em>.</h1>
       <p className="copy">A fee-powered payout loop: eligible DEVS holders share the MSFT that flows through each completed distribution round.</p>
       <div className="actions"><a className="button primary" href="#payouts">View recent payouts ↓</a><a className="button quiet" href="#mechanics">How it works ↓</a></div>
-      <p className="open"><span />Live payout activity · onchain</p>
+      <p className="open"><span />Payouts occur every hour · onchain</p>
     </section>
     <section className="statement"><p>DEVS is built around a simple idea</p><strong>Ownership participates.</strong><span>MSFT payouts are funded by collected fees and split by eligible DEVS balance at the distribution checkpoint.</span></section>
     <PayoutFeed />
     <section className="section" id="mechanics">
       <div className="heading"><p className="eyebrow"><span />The payout loop</p><h2>Built to be<br /><i>verifiable.</i></h2></div>
       <div className="flow">{flow.map(([number, title, body]) => <article key={number}><b>{number}</b><h3>{title}</h3><p>{body}</p></article>)}</div>
-      <p className="note">The current keeper is configured to run a daily payout cycle. Every payout depends on fees received and a completed onchain round.</p>
+      <p className="note">The current keeper is configured to run an hourly payout cycle. Every payout depends on fees received and a completed onchain round.</p>
     </section>
     <section className="section contracts" id="contracts">
       <div className="heading small"><p className="eyebrow"><span />Onchain identifiers</p><h2>The <i>details.</i></h2></div>
