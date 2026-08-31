@@ -3,27 +3,33 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const RPC_URL = "https://rpc.mainnet.chain.robinhood.com";
-const MSFT = "0xe93237C50D904957Cf27E7B1133b510C669c2e74";
 const DISTRIBUTOR = "0x6Abb1E02903ea1a8Cd7F9A148E66D3cbD6cb4e69";
-const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
-const DISTRIBUTOR_TOPIC = `0x${DISTRIBUTOR.slice(2).toLowerCase().padStart(64, "0")}`;
+const ROUND_COUNT_CALL = "0x127f0b3f";
+const ROUND_INFO_SELECTOR = "0x427f0b00";
+const ONE_MSFT = 10n ** 18n;
+const FULL_HOLDER_THRESHOLD = 100n;
 
-type RpcLog = { blockNumber: string; data: string; topics: string[]; transactionHash: string };
-type Payout = { amount: string; block: number; recipient: string; transactionHash: string };
+type Round = { id: number; recipientCount: bigint; paidCount: bigint; paidOut: bigint };
+type PayoutStats = { lastFullHolderPayout: Round | null; totalPaid: bigint; completedRoundCount: number };
 
-function short(address: string) {
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
-}
-
-function formatMsft(hexValue: string) {
-  const amount = BigInt(hexValue);
-  const whole = amount / 10n ** 18n;
-  const fraction = (amount % 10n ** 18n).toString().padStart(18, "0").slice(0, 8).replace(/0+$/, "");
+function formatMsft(amount: bigint) {
+  if (amount > 0n && amount < 1_000_000_000_000n) return "< 0.000001";
+  const whole = amount / ONE_MSFT;
+  const fraction = (amount % ONE_MSFT).toString().padStart(18, "0").slice(0, 6).replace(/0+$/, "");
   return `${whole.toLocaleString()}${fraction ? `.${fraction}` : ""}`;
 }
 
 function formatUpdatedAt(date: Date) {
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+}
+
+function calldata(selector: string, id: number) {
+  return `${selector}${BigInt(id).toString(16).padStart(64, "0")}`;
+}
+
+function readWord(result: string, position: number) {
+  const start = 2 + position * 64;
+  return BigInt(`0x${result.slice(start, start + 64)}`);
 }
 
 async function rpc<T>(method: string, params: unknown[]) {
@@ -37,8 +43,28 @@ async function rpc<T>(method: string, params: unknown[]) {
   return body.result;
 }
 
+async function getPayoutStats(): Promise<PayoutStats> {
+  const countResult = await rpc<string>("eth_call", [{ to: DISTRIBUTOR, data: ROUND_COUNT_CALL }, "latest"]);
+  const roundCount = Number(BigInt(countResult));
+  const rounds: Round[] = [];
+
+  for (let id = roundCount - 1; id >= 0; id--) {
+    const result = await rpc<string>("eth_call", [{ to: DISTRIBUTOR, data: calldata(ROUND_INFO_SELECTOR, id) }, "latest"]);
+    const recipientCount = readWord(result, 3);
+    const paidCount = readWord(result, 4);
+    rounds.push({ id, recipientCount, paidCount, paidOut: readWord(result, 6) });
+  }
+
+  const completed = rounds.filter((round) => round.recipientCount > 0n && round.paidCount >= round.recipientCount);
+  return {
+    lastFullHolderPayout: completed.find((round) => round.recipientCount >= FULL_HOLDER_THRESHOLD && round.paidOut > 0n) || completed[0] || null,
+    totalPaid: completed.reduce((total, round) => total + round.paidOut, 0n),
+    completedRoundCount: completed.length,
+  };
+}
+
 export default function PayoutFeed() {
-  const [payouts, setPayouts] = useState<Payout[]>([]);
+  const [stats, setStats] = useState<PayoutStats | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const hasLoaded = useRef(false);
@@ -49,23 +75,7 @@ export default function PayoutFeed() {
     inFlight.current = true;
     if (!hasLoaded.current) setState("loading");
     try {
-      const head = Number.parseInt(await rpc<string>("eth_blockNumber", []), 16);
-      const logs = await rpc<RpcLog[]>("eth_getLogs", [{
-        fromBlock: `0x${Math.max(0, head - 200_000).toString(16)}`,
-        toBlock: "latest",
-        address: MSFT,
-        topics: [TRANSFER_TOPIC, DISTRIBUTOR_TOPIC],
-      }]);
-      const newest = logs
-        .map((log) => ({
-          amount: formatMsft(log.data),
-          block: Number.parseInt(log.blockNumber, 16),
-          recipient: `0x${log.topics[2].slice(-40)}`,
-          transactionHash: log.transactionHash,
-        }))
-        .sort((a, b) => b.block - a.block)
-        .slice(0, 12);
-      setPayouts(newest);
+      setStats(await getPayoutStats());
       setLastUpdated(new Date());
       hasLoaded.current = true;
       setState("ready");
@@ -84,16 +94,23 @@ export default function PayoutFeed() {
 
   return <section className="section payouts" id="payouts">
     <div className="payout-head">
-      <div><p className="eyebrow"><span />Payout ledger</p><h2>Latest <i>$MSFT</i><br />payments.</h2></div>
-      <div className="ledger-meta"><span className={state === "ready" ? "ledger-dot" : "ledger-dot waiting"} /> <span>{state === "ready" && lastUpdated ? `Last updated ${formatUpdatedAt(lastUpdated)}` : "Loading payout activity"}</span></div>
+      <div><p className="eyebrow"><span />Onchain payout totals</p><h2>What <i>$MSFT</i><br />has paid.</h2></div>
+      <div className="ledger-meta"><span className={state === "ready" ? "ledger-dot" : "ledger-dot waiting"} /> <span>{state === "ready" && lastUpdated ? `Last updated ${formatUpdatedAt(lastUpdated)}` : "Loading payout totals"}</span></div>
     </div>
-    <p className="payout-intro">Every row is an MSFT token transfer sent from the payout distributor to a holder. Tap any row to inspect its onchain receipt.</p>
-    <div className="ledger" aria-live="polite">
-      <div className="ledger-labels"><span>Recipient</span><span>Amount</span><span>Block</span><span>Receipt</span></div>
-      {state === "loading" && Array.from({ length: 5 }, (_, index) => <div className="ledger-loading" key={index}><span /><span /><span /><span /></div>)}
-      {state === "error" && <div className="ledger-empty">Couldn’t reach the payout ledger just now. <button onClick={() => void load()}>Try again</button></div>}
-      {state === "ready" && payouts.length === 0 && <div className="ledger-empty">No payout transfers were found in the recent chain window.</div>}
-      {state === "ready" && payouts.map((payout) => <a className="ledger-row" key={`${payout.transactionHash}-${payout.recipient}`} href={`https://robinhoodchain.blockscout.com/tx/${payout.transactionHash}`} target="_blank" rel="noreferrer"><span><b className="recipient-dot" />{short(payout.recipient)}</span><strong>{payout.amount} <i>$MSFT</i></strong><span>#{payout.block.toLocaleString()}</span><span>View ↗</span></a>)}
-    </div>
+    <p className="payout-intro">These figures come directly from the holder distributor contract, including every completed batch in each payout round.</p>
+    {state === "loading" && <div className="payout-stats loading"><span /><span /></div>}
+    {state === "error" && <div className="ledger-empty">Couldn’t reach the payout contract just now. <button onClick={() => void load()}>Try again</button></div>}
+    {state === "ready" && stats && <div className="payout-stats">
+      <article className="payout-stat latest">
+        <p>Last full-holder payout</p>
+        <strong>{stats.lastFullHolderPayout ? formatMsft(stats.lastFullHolderPayout.paidOut) : "—"} <i>$MSFT</i></strong>
+        <span>{stats.lastFullHolderPayout ? `Round #${stats.lastFullHolderPayout.id} · ${stats.lastFullHolderPayout.recipientCount.toLocaleString()} holders paid` : "No completed payout round yet"}</span>
+      </article>
+      <article className="payout-stat">
+        <p>Total paid out</p>
+        <strong>{formatMsft(stats.totalPaid)} <i>$MSFT</i></strong>
+        <span>Across {stats.completedRoundCount.toLocaleString()} completed onchain rounds</span>
+      </article>
+    </div>}
   </section>;
 }
