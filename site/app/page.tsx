@@ -20,7 +20,7 @@ export default function Home() {
       <h1>Hold <i>$DEVS</i>.<br />Receive <em>$MSFT</em>.</h1>
       <p className="copy">A fee-powered payout loop: eligible DEVS holders share the MSFT that flows through each completed distribution round.</p>
       <div className="actions"><a className="button primary" href="#payouts">View recent payouts ↓</a><a className="button quiet" href="#mechanics">How it works ↓</a></div>
-      <p className="open"><span />Payouts occur every hour · onchain</p>
+      <div className="hero-links"><p className="open"><span />Payouts occur every hour · onchain</p><div className="market-links"><a href="https://dexscreener.com/robinhood/0x130caf8b43343e182a79a4046932bd5623a87e9309e7c53e2d1efb4ec6b8e2a0" target="_blank" rel="noreferrer">Dexscreener ↗</a><a href="https://bankr.bot/terminal/trade?out=0x80db362eab104ec378e19d0a3dcd5e84bafd4ba3&amp;chain=robinhood" target="_blank" rel="noreferrer">Bankr ↗</a><a href="https://fomo.family/tokens/robinhood/0x80db362eab104ec378e19d0a3dcd5e84bafd4ba3" target="_blank" rel="noreferrer">Fomo ↗</a></div></div>
     </section>
     <section className="statement"><p>DEVS is built around a simple idea</p><strong>Ownership participates.</strong><span>MSFT payouts are funded by collected fees and split by eligible DEVS balance at the distribution checkpoint.</span></section>
     <PayoutFeed />
@@ -34,6 +34,6 @@ export default function Home() {
       <div className="cards">{addresses.map(([label, address]) => <article key={label}><p>{label}</p><code>{address}</code><span className="verified">Verified on Robinhood Chain</span></article>)}<article className="chain"><p>Network</p><strong>Robinhood Chain</strong><span>Chain ID 4663</span></article></div>
     </section>
     <section className="source"><p className="eyebrow"><span />Your proof, onchain</p><h2>Payouts you can<br /><i>actually see.</i></h2><a className="button primary" href="#payouts">View payout activity ↑</a></section>
-    <footer><a className="brand" href="#top"><b>$</b>DEVS</a><div className="footer-links"><a href="https://dexscreener.com/robinhood/0x130caf8b43343e182a79a4046932bd5623a87e9309e7c53e2d1efb4ec6b8e2a0" target="_blank" rel="noreferrer">Dexscreener ↗</a><a href="https://bankr.bot/terminal/trade?out=0x80db362eab104ec378e19d0a3dcd5e84bafd4ba3&amp;chain=robinhood" target="_blank" rel="noreferrer">Bankr ↗</a><a href="https://fomo.family/tokens/robinhood/0x80db362eab104ec378e19d0a3dcd5e84bafd4ba3" target="_blank" rel="noreferrer">Fomo ↗</a></div><p>Information only. Token ownership and payouts involve risk; payout amounts are not guaranteed.</p></footer>
+    <footer><a className="brand" href="#top"><b>$</b>DEVS</a><p>Information only. Token ownership and payouts involve risk; payout amounts are not guaranteed.</p></footer>
   </main>;
 }
