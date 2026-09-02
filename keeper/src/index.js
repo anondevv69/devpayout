@@ -21,6 +21,20 @@ import fs from "node:fs";
 
 const BATCH = Number(process.env.PAY_BATCH_SIZE || "40");
 const CHECKPOINT_LAGS = [128n, 256n, 512n, 1024n];
+
+function minPayoutWei() {
+  const raw = String(process.env.MIN_PAYOUT_WEI || "1000000000000").trim();
+  if (!raw || raw === "0") return 0n;
+  return BigInt(raw);
+}
+
+function dustRoundLog(roundId, payoutAmount, summary) {
+  console.log(
+    `dust round ${roundId}: ${payoutAmount} wei, ${summary?.recipients ?? 0} recipients — cannot pay. ` +
+      `Set SKIP_ROUND_IDS=${roundId} on Railway (comma-separate ghosts like 11,25). ` +
+      `New fees on the router will open the next real round.`,
+  );
+}
 const ARB_SYS = "0x0000000000000000000000000000000000000064";
 const arbSysAbi = parseAbi(["function arbBlockNumber() view returns (uint256)"]);
 const PHASE_OPEN = 0;
@@ -381,7 +395,12 @@ async function rebuildMerkle(publicClient, _distributor, _roundId, info, payoutA
   const summary = allocationSummary(holders, total, payoutAmount);
   console.log("allocation", summary);
   const entries = allocations(holders, total, payoutAmount, summary.mode);
-  if (entries.length === 0) throw new Error("no eligible holders at checkpoint");
+  if (entries.length === 0) {
+    const err = new Error("no eligible holders at checkpoint");
+    err.code = "DUST_ROUND";
+    err.summary = summary;
+    throw err;
+  }
   assertEligibleHolderCount(holders.length, "lockRound");
   const merkle = buildMerkle(entries);
   return { merkle, holders: entries.length, checkpoint };
@@ -474,26 +493,44 @@ export async function run() {
 
   const active = await findActiveRound(publicClient, distributor, msftToken);
 
-  // Locked rounds must resume from cached merkle — never rebuild from a fresh Robinscan pull.
+  // Locked rounds must resume from cached merkle when possible.
+  // Always prepare a holder snapshot first so rebuildMerkle can fall back if /data cache was lost.
+  const holderPrep = await prepareHolderSnapshot(devToken);
+
   if (active?.phase === PHASE_LOCKED && active.paidCount < active.recipientCount) {
     const payoutAmount = BigInt(active.info[5]);
     const lockedRoot = active.info[7];
     console.log("resume locked round", active.roundId.toString(), active.paidCount, "/", active.recipientCount);
-    const { merkle } = await merkleForRound(
-      publicClient,
-      active.roundId,
-      active.info,
-      payoutAmount,
-      lockedRoot,
-    );
-    if (!dryRun()) {
-      await payAll(wallet, publicClient, distributor, active.roundId, merkle, active.paidCount);
+    try {
+      const { merkle, fromCache } = await merkleForRound(
+        publicClient,
+        active.roundId,
+        active.info,
+        payoutAmount,
+        lockedRoot,
+      );
+      console.log("resume merkle", { fromCache, root: merkle.root });
+      if (!fromCache) {
+        saveRoundMerkle(active.roundId, merkle, { source: "resume-rebuild", lockedRoot });
+        archiveHoldersCsv(active.roundId, holderPrep.path);
+      }
+      if (!dryRun()) {
+        await payAll(wallet, publicClient, distributor, active.roundId, merkle, active.paidCount);
+      }
+      console.log("done resume round", active.roundId.toString());
+      return;
+    } catch (e) {
+      const msg = String(e?.message || e);
+      console.error(
+        "locked round resume failed:",
+        msg,
+        `\nFix: mount a Railway volume at /data, then either:\n` +
+          `  1) ROUND_ID=${active.roundId} node keeper/src/recover-round-merkle.js  (write merkle to /data/rounds)\n` +
+          `  2) SKIP_ROUND_IDS=${active.roundId} to abandon and open a new round (funds stay in round ${active.roundId})\n`,
+      );
+      throw e;
     }
-    console.log("done resume round", active.roundId.toString());
-    return;
   }
-
-  const holderPrep = await prepareHolderSnapshot(devToken);
   const skip = buildSkipSet({
     pool: envMaybeAddr("POOL"),
     extra: String(process.env.EXCLUDE || "").split(","),
@@ -540,13 +577,28 @@ export async function run() {
       console.log("open round has no MSFT yet — waiting for fees");
       return;
     }
-    const { merkle, holders, checkpoint } = await rebuildMerkle(
-      publicClient,
-      distributor,
-      active.roundId,
-      info,
-      payoutAmount,
-    );
+    if (payoutAmount < minPayoutWei()) {
+      dustRoundLog(active.roundId, payoutAmount.toString(), { recipients: 0 });
+      return;
+    }
+    let merkle;
+    let holders;
+    let checkpoint;
+    try {
+      ({ merkle, holders, checkpoint } = await rebuildMerkle(
+        publicClient,
+        distributor,
+        active.roundId,
+        info,
+        payoutAmount,
+      ));
+    } catch (e) {
+      if (e?.code === "DUST_ROUND" || String(e?.message || "").includes("no eligible holders")) {
+        dustRoundLog(active.roundId, payoutAmount.toString(), e.summary);
+        return;
+      }
+      throw e;
+    }
     console.log("lock", { holders, payout: payoutAmount.toString(), checkpoint: checkpoint.toString() });
     if (dryRun()) return;
     const lockHash = await wallet.writeContract({
@@ -574,6 +626,10 @@ export async function run() {
     console.log("no MSFT on distributor — claim/route only this run");
     return;
   }
+  if (msftOnDistributor < minPayoutWei()) {
+    console.log(`distributor balance ${msftOnDistributor} wei below MIN_PAYOUT_WEI — skipping openRound`);
+    return;
+  }
 
   const { roundId } = await openRoundForDistributor(
     wallet,
@@ -599,14 +655,29 @@ export async function run() {
     console.log("absorb left zero payout");
     return;
   }
+  if (payoutAmount < minPayoutWei()) {
+    dustRoundLog(roundId, payoutAmount.toString(), { recipients: 0 });
+    return;
+  }
 
-  const { merkle, holders, checkpoint } = await rebuildMerkle(
-    publicClient,
-    distributor,
-    roundId,
-    info,
-    payoutAmount,
-  );
+  let merkle;
+  let holders;
+  let checkpoint;
+  try {
+    ({ merkle, holders, checkpoint } = await rebuildMerkle(
+      publicClient,
+      distributor,
+      roundId,
+      info,
+      payoutAmount,
+    ));
+  } catch (e) {
+    if (e?.code === "DUST_ROUND" || String(e?.message || "").includes("no eligible holders")) {
+      dustRoundLog(roundId, payoutAmount.toString(), e.summary);
+      return;
+    }
+    throw e;
+  }
   console.log("lock", { holders, payout: payoutAmount.toString(), checkpoint: checkpoint.toString() });
 
   const lockHash = await wallet.writeContract({

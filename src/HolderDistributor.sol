@@ -7,15 +7,14 @@ interface IERC20 {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
 
-/// @dev Robinhood Chain (Arbitrum-style): `block.number` is an L1 estimate, not L2 height.
 interface IArbSys {
     function arbBlockNumber() external view returns (uint256);
 }
 
-/// @title MsftHolderDistributor
-/// @notice Daily MSFT payouts to $dev token holders. Keeper snapshots holder balances
-/// off-chain at `checkpointBlock`, seals a Merkle root, and pushes MSFT in batches.
-contract MsftHolderDistributor {
+/// @title HolderDistributor
+/// @notice Push paired-RWA payouts to meme holders. Keeper snapshots balances off-chain,
+/// seals a Merkle root, and pays in batches.
+contract HolderDistributor {
     enum Phase {
         Open,
         Locked
@@ -39,6 +38,8 @@ contract MsftHolderDistributor {
 
     mapping(uint256 => Round) internal _rounds;
     mapping(uint256 => mapping(address => bool)) public paid;
+
+    address internal constant ARB_SYS = 0x0000000000000000000000000000000000000064;
 
     event RoundOpened(
         uint256 indexed roundId, address indexed payoutToken, address indexed holderToken, uint64 checkpointBlock
@@ -75,8 +76,6 @@ contract MsftHolderDistributor {
         _;
     }
 
-    address internal constant ARB_SYS = 0x0000000000000000000000000000000000000064;
-
     constructor(address owner_, address keeper_) {
         owner = owner_;
         keeper = keeper_;
@@ -84,7 +83,6 @@ contract MsftHolderDistributor {
         emit KeeperSet(address(0), keeper_);
     }
 
-    /// @notice L2 block height. On Robinhood Chain, matches `eth_blockNumber` / ArbSys.
     function chainBlockNumber() public view returns (uint256) {
         (bool ok, bytes memory data) = ARB_SYS.staticcall(abi.encodeWithSelector(IArbSys.arbBlockNumber.selector));
         if (ok && data.length >= 32) return abi.decode(data, (uint256));
@@ -116,7 +114,6 @@ contract MsftHolderDistributor {
         emit RoundFunded(roundId, tokenAmount, r.payoutAmount);
     }
 
-    /// @notice Credit MSFT already sitting on this contract (routed from DevMsftFeeRouter).
     function absorbBalance(uint256 roundId) external onlyKeeper returns (uint256 added) {
         Round storage r = _rounds[roundId];
         if (r.phase != Phase.Open) revert WrongPhase();

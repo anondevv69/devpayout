@@ -6,7 +6,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node keeper/src/index.js",
+    "start": "node keeper/src/run-all.js",
+    "start:single": "node keeper/src/index.js",
+    "start:api": "node api/server.js",
     "test": "forge test"
   },
   "dependencies": {

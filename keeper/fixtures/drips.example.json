@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "updatedAt": null,
+  "drips": [
+    {
+      "id": "drip-bits",
+      "memeToken": "0xD96CC6ab8322D3E2DE735780146C1Af5fa874BA3",
+      "pairedToken": "0x27c99fBde9D0d2AA4f4Bfb4943f237843DdF6958",
+      "router": "0x1d2857d7178c0496F30Af97b36d45ECF659bb29E",
+      "distributor": "0x4a0ae0e0E9e52Caa0bE8b7556815E64F9547F1E8",
+      "symbol": "bits",
+      "pairedSymbol": "DDOG",
+      "automated": false,
+      "platformFeeBps": 1000,
+      "notes": "Seed example — copy into Railway volume /data/drips.json. Set automated true after fee retarget. Use SKIP_ROUND_IDS=1 if round 1 merkle was lost."
+    }
+  ]
+}

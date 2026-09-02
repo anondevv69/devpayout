@@ -1,120 +1,100 @@
 # devpayout
 
-Doppler fee flywheel for **DEVS** on Robinhood Chain (`4663`):
+**Project B — Holder drip Lite** for Bankr tokens on Robinhood Chain (`4663`).
 
-- **DEVS** trading fees → locked 69 years in `TimeLockVault`
-- **MSFT** paired fees → daily **pro-rata** split to DEVS holders (weighted by balance; Robinscan snapshot)
+Per token: Doppler fees → router → lock meme / push paired RWA to holders (minus **10%** platform fee on new `DripFeeRouter` deploys).
 
-Same pattern as Bankr Prompt on Base; this repo is standalone (contracts + Railway keeper).
+Grow later into Pay Me Dividends Hub (Project A). This repo is the drip product.
+
+## Two phases for every user
+
+1. **Test** — send paired RWA to `distributor` → run a drip
+2. **Automate** — retarget Doppler fee beneficiary → `router` → shared 30m keeper
+
+Bankr skill: [`skills/enable-holder-drips/`](./skills/enable-holder-drips/)
+
+## Architecture
+
+```text
+Bankr skill → API (Railway SERVICE=api)
+                 → register drip in /data/drips.json
+Keeper cron (*/30) SERVICE=keeper DRIP_MODE=all
+                 → claim/route/pay for each automated drip
+```
+
+Users never configure Railway. Mount a **persistent volume at `/data`** on both services (shared volume preferred).
 
 ## Contracts
 
 | Contract | Role |
 |----------|------|
-| `DevMsftFeeRouter` | Doppler beneficiary — `claimDoppler()` + `route()` |
-| `MsftHolderDistributor` | Daily MSFT holder rounds (Merkle `payBatch`) |
+| `DripFactory` | `createDrip(meme, paired)` → distributor + fee router (10%) |
+| `DripFeeRouter` | claim Doppler, lock meme, skim 10%, send RWA to distributor |
+| `HolderDistributor` | Merkle push rounds to holders |
+| `DevMsftFeeRouter` / `MsftHolderDistributor` | Legacy DEVS/bits deploys (no onchain fee skim) |
 
-## Deploy
+## Fix stuck locked round (bits round 1)
+
+If cron logs `resume locked round 1 0 / 21` then crashes:
+
+1. Attach Railway volume at `/data`
+2. Recover merkle: `ROUND_ID=1 … node keeper/src/recover-round-merkle.js` into `/data/rounds/`
+3. Or set `SKIP_ROUND_IDS=1` and fund a **new** test drip (round 1 funds stay locked in that round)
+
+Keeper now prepares a Robinscan snapshot before resume so rebuild can succeed when the root still matches.
+
+## Deploy factory
 
 ```bash
-git clone --recurse-submodules https://github.com/anondevv69/devpayout.git
-cd devpayout
-# If you already cloned without submodules:
-# git submodule update --init --recursive
-
 export ROBINHOOD_RPC_URL=https://rpc.mainnet.chain.robinhood.com
 export DEPLOYER_KEY=0x...
-export DEV_TOKEN=0x80Db362eAB104Ec378E19D0a3dCD5E84Bafd4bA3
-export MSFT_TOKEN=0xe93237C50D904957Cf27E7B1133b510C669c2e74
-export PAYOUT_OWNER=0x374D91a5674Fa7Cf86E725093b5848b97e1e13b4
+export PLATFORM_FEE_BPS=1000
+export TREASURY=0x374d91a5674fa7cf86e725093b5848b97e1e13b4
 export PAYOUT_KEEPER=0x6eb052b25399809F858Dc1B69b8Ff9225aE44b54
 
-forge script script/DeployDevMsft.s.sol \
+forge script script/DeployDripFactory.s.sol \
   --rpc-url $ROBINHOOD_RPC_URL \
-  --broadcast \
-  --private-key $DEPLOYER_KEY \
-  --skip-simulation --slow
+  --broadcast --private-key $DEPLOYER_KEY --skip-simulation --slow
 ```
 
-Save `DEV_MSFT_ROUTER` and `MSFT_HOLDER_DISTRIBUTOR`.
+Then:
 
-## Handoff (one-time)
+```bash
+cast send $DRIP_FACTORY "createDrip(address,address)" $MEME $PAIRED \
+  --private-key $DEPLOYER_KEY --rpc-url $ROBINHOOD_RPC_URL
+```
 
-1. Transfer Doppler fee beneficiary → `DEV_MSFT_ROUTER` (Bankr UI or API)
-2. Set Railway env vars (`keeper/.env.example`)
-3. Deploy Railway from this repo (new project, root = repo root)
-4. Cron runs daily (`0 0 * * *` UTC): claim → route → Robinscan snapshot → pro-rata pay
+## API
 
-## Railway
+```bash
+SERVICE=api npm run start:api
+# GET  /v1/platform
+# POST /v1/drips          { memeToken, pairedToken, router, distributor, ... }
+# POST /v1/drips/:id/test
+# POST /v1/drips/:id/automate { currentBeneficiary }
+```
 
-New Railway project → connect `anondevv69/devpayout` → root directory `/` (default).
+## Railway (two services, one repo)
 
-| Var | What |
-|-----|------|
-| `KEEPER_KEY` | `0x6eb0…` keeper wallet |
-| `DEV_MSFT_ROUTER` | deployed router |
-| `MSFT_HOLDER_DISTRIBUTOR` | deployed distributor |
-| `POOL` | LP/pool address to exclude from snapshots |
-| `HOLDERS_SOURCE` | `robinscan` (default) |
-| `REQUIRE_ROBINSCAN` | `1` |
-| `HOLDERS_CACHE_PATH` | `/data/holders.csv` on Railway volume |
-| `ALLOCATION_MODE` | `pro_rata` (default) |
-| `MIN_ELIGIBLE_HOLDERS` | `380` |
-| `OPEN_CHECKPOINT` | `25866117` (L1 checkpoint for distributor) |
-| `DISTRIBUTOR_USE_L1_CHECKPOINT` | `1` |
+| Service | Env | Cron |
+|---|---|---|
+| **api** | `SERVICE=api` | none (web) |
+| **keeper** | `SERVICE=keeper`, `DRIP_MODE=all`, `KEEPER_KEY`, volume `/data` | `*/30 * * * *` |
+
+Seed registry: copy `keeper/fixtures/drips.example.json` → `/data/drips.json` on the volume.
+
+## Legacy bits addresses
+
+| | Address |
+|--|---------|
+| bits | `0xD96CC6ab8322D3E2DE735780146C1Af5fa874BA3` |
+| DDOG | `0x27c99fBde9D0d2AA4f4Bfb4943f237843DdF6958` |
+| bits router | `0x1d2857d7178c0496F30Af97b36d45ECF659bb29E` |
+| bits distributor | `0x4a0ae0e0E9e52Caa0bE8b7556815E64F9547F1E8` |
+| Keeper | `0x6eb052b25399809F858Dc1B69b8Ff9225aE44b54` |
 
 ## Tests
 
 ```bash
 forge test
-cd keeper && npm ci
 ```
-
-## Verify on Blockscout
-
-Robinhood Chain uses **Blockscout** (not Etherscan). Run from your Mac in the repo:
-
-```bash
-chmod +x script/verify.sh
-./script/verify.sh
-```
-
-Or manually:
-
-```bash
-forge verify-contract 0x6Abb1E02903ea1a8Cd7F9A148E66D3cbD6cb4e69 \
-  src/MsftHolderDistributor.sol:MsftHolderDistributor \
-  --chain-id 4663 \
-  --verifier blockscout \
-  --verifier-url https://robinhoodchain.blockscout.com/api/ \
-  --constructor-args $(cast abi-encode "constructor(address,address)" \
-    0x374D91a5674Fa7Cf86E725093b5848b97e1e13b4 \
-    0x6eb052b25399809F858Dc1B69b8Ff9225aE44b54) \
-  --watch
-
-forge verify-contract 0x22492f09e63f6893b0a16F14dd5aDA5CbedC5407 \
-  src/DevMsftFeeRouter.sol:DevMsftFeeRouter \
-  --chain-id 4663 \
-  --verifier blockscout \
-  --verifier-url https://robinhoodchain.blockscout.com/api/ \
-  --constructor-args $(cast abi-encode "constructor(address,address,address,address,uint256)" \
-    0x80Db362eAB104Ec378E19D0a3dCD5E84Bafd4bA3 \
-    0xe93237C50D904957Cf27E7B1133b510C669c2e74 \
-    0x6Abb1E02903ea1a8Cd7F9A148E66D3cbD6cb4e69 \
-    0xeFC8591519a2D8885C1b62C7de84ce906F22Fa78 \
-    2175984000) \
-  --watch
-```
-
-Compiler settings must match deploy: **Solidity 0.8.26**, **optimizer on (200 runs)**, **via_ir = true** (see `foundry.toml`).
-
-**Manual fallback:** open each contract on Blockscout → **Contract** tab → **Verify & publish** → paste source + constructor args above.
-
-## Token constants
-
-| | Address |
-|--|---------|
-| DEVS | `0x80Db362eAB104Ec378E19D0a3dCD5E84Bafd4bA3` |
-| MSFT | `0xe93237C50D904957Cf27E7B1133b510C669c2e74` |
-| Lock vault | `0xeFC8591519a2D8885C1b62C7de84ce906F22Fa78` |
-| Doppler initializer | `0x4e3468951D49f2EEa976eD0D6e75fFCb44a9a544` |
