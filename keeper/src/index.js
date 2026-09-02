@@ -519,10 +519,7 @@ export async function run() {
 
 async function runLocked() {
   const transport = makeTransport();
-  const account = privateKeyToAccount({
-    privateKey: key(),
-    nonceManager,
-  });
+  const account = privateKeyToAccount(key(), { nonceManager });
   const publicClient = createPublicClient({ chain: robinhood, transport });
   const wallet = createWalletClient({ account, chain: robinhood, transport });
 
