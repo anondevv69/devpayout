@@ -2,6 +2,25 @@ import fs from "node:fs";
 import path from "node:path";
 import { getAddress } from "viem";
 
+/** Launchpads that can feed a drip. bankr = Doppler; pools_fun = Sushi/Bankr; pools_trade = Uniswap Labs. */
+export const DRIP_SOURCES = ["bankr", "pools_fun", "pools_trade"];
+
+export function normalizeSource(value) {
+  const raw = String(value || "bankr")
+    .trim()
+    .toLowerCase()
+    .replace(/[.\s-]+/g, "_");
+  if (raw === "poolsfun" || raw === "pools_fun" || raw === "sushi" || raw === "sushi_launchpad") {
+    return "pools_fun";
+  }
+  if (raw === "poolstrade" || raw === "pools_trade" || raw === "uniswap" || raw === "uniswap_pools") {
+    return "pools_trade";
+  }
+  if (raw === "bankr" || raw === "doppler" || raw === "bankr_doppler") return "bankr";
+  if (DRIP_SOURCES.includes(raw)) return raw;
+  return "bankr";
+}
+
 function registryPath() {
   return String(process.env.DRIP_REGISTRY_PATH || "/data/drips.json").trim();
 }
@@ -57,6 +76,7 @@ export function upsertDrip(partial) {
       String(d.id || "").toLowerCase() === id ||
       d.memeToken?.toLowerCase() === memeToken.toLowerCase(),
   );
+  const source = normalizeSource(partial.source);
   const row = {
     id,
     memeToken,
@@ -65,6 +85,7 @@ export function upsertDrip(partial) {
     distributor: getAddress(partial.distributor),
     symbol: partial.symbol || null,
     pairedSymbol: partial.pairedSymbol || null,
+    source,
     automated: Boolean(partial.automated),
     platformFeeBps: Number(partial.platformFeeBps ?? process.env.PLATFORM_FEE_BPS ?? 1000),
     createdAt: partial.createdAt || new Date().toISOString(),

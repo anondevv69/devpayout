@@ -15,6 +15,7 @@ function applyDripEnv(drip) {
   process.env.MSFT_HOLDER_DISTRIBUTOR = getAddress(drip.distributor);
   process.env.DEV_TOKEN = getAddress(drip.memeToken);
   process.env.MSFT_TOKEN = getAddress(drip.pairedToken);
+  process.env.DRIP_SOURCE = String(drip.source || "bankr");
   process.env.HOLDERS_CACHE_PATH =
     process.env.HOLDERS_CACHE_PATH || `/data/holders-${drip.memeToken.slice(2, 10).toLowerCase()}.csv`;
   // Isolate round merkle per drip so concurrent tokens don't collide.

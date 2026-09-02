@@ -588,10 +588,15 @@ async function runLocked() {
   });
 
   if (!dryRun()) {
-    try {
-      await claimDopplerIfAvailable(publicClient, wallet, router, devToken);
-    } catch (e) {
-      console.log("doppler claim skipped:", String(e?.shortMessage || e?.message || e));
+    const source = String(process.env.DRIP_SOURCE || "bankr").toLowerCase();
+    if (source === "bankr" || source === "doppler" || source === "bankr_doppler") {
+      try {
+        await claimDopplerIfAvailable(publicClient, wallet, router, devToken);
+      } catch (e) {
+        console.log("doppler claim skipped:", String(e?.shortMessage || e?.message || e));
+      }
+    } else {
+      console.log("skip doppler claim — source", source, "(fees should already sit on router or distributor)");
     }
     await routeFees(wallet, publicClient, router);
   } else {

@@ -43,6 +43,16 @@ If cron logs `resume locked round 1 0 / 21` then crashes:
 
 Keeper now prepares a Robinscan snapshot before resume so rebuild can succeed when the root still matches.
 
+## Supported launchpads
+
+| `source` | Product | Automate |
+|---|---|---|
+| `bankr` | Bankr Doppler | Retarget fee beneficiary → router |
+| `pools_fun` | pools.fun (Sushi × Bankr) | Fee Recipient = router at launch, or forward claimed fees |
+| `pools_trade` | pools.trade (Uniswap Labs) | Set creator fee wallet → router |
+
+Stock/RWA quote only. Keeper skips Doppler claim when `source` is not `bankr` and `route()`s balances already on the router.
+
 ## Deploy factory
 
 **Live (Robinhood 4663):** `DRIP_FACTORY=0x5B5ade0E3b38842f1758DE629F0Cd35AF647fC28`  
