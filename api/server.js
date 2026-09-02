@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 import { getAddress } from "viem";
+import { createDripOnchain, factoryAddress } from "./factory.js";
 import { getDrip, listDrips, loadRegistry, setAutomated, upsertDrip } from "../keeper/src/drip-registry.js";
 
 const PORT = Number.parseInt(process.env.PORT || "8080", 10);
@@ -37,7 +38,8 @@ function platform() {
     cron: CRON,
     onePerRwa: false,
     flow: ["create", "test_send_paired_to_distributor", "test_drip", "automate_retarget"],
-    factory: process.env.DRIP_FACTORY || null,
+    factory: factoryAddress(),
+    canAutoDeploy: Boolean(factoryAddress()),
   };
 }
 
@@ -97,7 +99,7 @@ async function handle(req, res) {
     return json(res, 200, { items: listDrips().map(dripResponse), registry: loadRegistry().updatedAt });
   }
 
-  if (req.method === "GET" && path.startsWith("/v1/drips/")) {
+  if (req.method === "GET" && path.startsWith("/v1/drips/") && !path.includes("/test") && !path.includes("/automate")) {
     const id = decodeURIComponent(path.slice("/v1/drips/".length));
     const drip = getDrip(id);
     if (!drip) return json(res, 404, { error: "drip_not_found" });
@@ -109,17 +111,41 @@ async function handle(req, res) {
     try {
       const memeToken = getAddress(body.memeToken || body.tokenAddress);
       const pairedToken = getAddress(body.pairedToken);
-      const router = body.router ? getAddress(body.router) : null;
-      const distributor = body.distributor ? getAddress(body.distributor) : null;
+      let router = body.router ? getAddress(body.router) : null;
+      let distributor = body.distributor ? getAddress(body.distributor) : null;
+      let deployTx = null;
+
+      const existing = getDrip(memeToken);
+      if (existing?.router && existing?.distributor && !body.forceNew) {
+        return json(res, 200, {
+          drip: dripResponse(existing),
+          reused: true,
+          next: [
+            `Send paired RWA (${existing.pairedSymbol || existing.pairedToken}) to ${existing.distributor}`,
+            `POST /v1/drips/${existing.id}/test`,
+            `When ready: POST /v1/drips/${existing.id}/automate with currentBeneficiary`,
+          ],
+        });
+      }
 
       if (!router || !distributor) {
-        return json(res, 400, {
-          error: "router_and_distributor_required",
-          message:
-            "Pass router + distributor from a Forge/factory deploy. " +
-            "Onchain factory deploy-from-API lands after DRIP_FACTORY is set and funded.",
-          platform: platform(),
-        });
+        if (!factoryAddress()) {
+          return json(res, 400, {
+            error: "factory_not_configured",
+            message:
+              "Omit router/distributor only after DRIP_FACTORY is set on the API. " +
+              "Until then pass router + distributor from a manual deploy.",
+            platform: platform(),
+          });
+        }
+        const created = await createDripOnchain({ memeToken, pairedToken });
+        router = created.router;
+        distributor = created.distributor;
+        deployTx = {
+          hash: created.txHash,
+          factoryDripId: created.dripId,
+          factory: created.factory,
+        };
       }
 
       const drip = upsertDrip({
@@ -132,11 +158,16 @@ async function handle(req, res) {
         automated: false,
         platformFeeBps: PLATFORM_FEE_BPS,
         poolId: body.poolId || null,
-        notes: body.notes || "registered via API — test before automate",
+        notes:
+          body.notes ||
+          (deployTx
+            ? "deployed via DripFactory — test before automate"
+            : "registered via API — test before automate"),
       });
 
       return json(res, 201, {
         drip: dripResponse(drip),
+        deployed: deployTx,
         next: [
           `Send paired RWA (${drip.pairedSymbol || drip.pairedToken}) to ${drip.distributor}`,
           `POST /v1/drips/${drip.id}/test`,
@@ -144,7 +175,8 @@ async function handle(req, res) {
         ],
       });
     } catch (e) {
-      return json(res, 400, { error: String(e?.message || e) });
+      const msg = String(e?.shortMessage || e?.message || e);
+      return json(res, 400, { error: msg, details: e?.body || undefined });
     }
   }
 
@@ -152,17 +184,15 @@ async function handle(req, res) {
     const id = decodeURIComponent(path.split("/")[3]);
     const drip = getDrip(id);
     if (!drip) return json(res, 404, { error: "drip_not_found" });
-    // Kick is async via env for the worker; API records intent.
     return json(res, 202, {
       accepted: true,
       drip: dripResponse(drip),
       message:
         "Test drip: ensure paired RWA is on the distributor, then run the keeper with " +
-        `DRIP_ID=${drip.id} (or wait for cron if this drip is included with INCLUDE_MANUAL=1).`,
+        `DRIP_ID=${drip.id} (or wait for cron if INCLUDE_MANUAL=1).`,
       run: {
         env: {
           DRIP_ID: drip.id,
-          DRIP_MODE: "single",
           DEV_MSFT_ROUTER: drip.router,
           MSFT_HOLDER_DISTRIBUTOR: drip.distributor,
           DEV_TOKEN: drip.memeToken,

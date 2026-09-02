@@ -11,9 +11,8 @@ RUN cd keeper && npm ci --omit=dev
 COPY keeper/src ./keeper/src
 COPY keeper/fixtures ./keeper/fixtures
 COPY api ./api
+COPY artifacts ./artifacts
 
-# SERVICE=api → HTTP API for Bankr skill
-# SERVICE=keeper (default) → multi-tenant cron worker
 ENV SERVICE=keeper
 ENV DRIP_MODE=all
 
