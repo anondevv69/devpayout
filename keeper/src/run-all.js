@@ -39,6 +39,14 @@ async function main() {
     const drips = listDrips({ automatedOnly: !includeManual });
     console.log("multi-tenant drips", drips.length, { includeManual });
     if (drips.length === 0) {
+      const hasLegacy = Boolean(String(process.env.DEV_MSFT_ROUTER || "").trim());
+      if (!hasLegacy) {
+        console.log(
+          "no drips in /data/drips.json and DEV_MSFT_ROUTER unset — nothing to run. " +
+            "Add a drip to the registry or set DEV_MSFT_ROUTER / MSFT_HOLDER_DISTRIBUTOR / DEV_TOKEN / MSFT_TOKEN.",
+        );
+        return;
+      }
       console.log("no drips in registry — falling back to single env flywheel");
       await runSingle();
       return;
