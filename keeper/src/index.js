@@ -8,7 +8,9 @@ import {
   http,
   parseAbi,
 } from "viem";
+import { pathToFileURL } from "node:url";
 import { privateKeyToAccount } from "viem/accounts";
+import { nonceManager } from "viem/nonce";
 import { claimDopplerIfAvailable } from "./doppler.js";
 import { prepareHolderSnapshot } from "./holders-snapshot.js";
 import { findOpenCheckpoint, snapshotCheckpoint } from "./checkpoint.js";
@@ -18,6 +20,7 @@ import { allocationSummary, allocations, buildMerkle } from "./merkle.js";
 import { loadHoldersCsv } from "./holders-csv.js";
 import { loadRoundMerkle, saveRoundMerkle } from "./merkle-cache.js";
 import fs from "node:fs";
+import path from "node:path";
 
 const BATCH = Number(process.env.PAY_BATCH_SIZE || "40");
 const CHECKPOINT_LAGS = [128n, 256n, 512n, 1024n];
@@ -473,9 +476,53 @@ function archiveHoldersCsv(roundId, csvPath) {
   }
 }
 
+/** Prevent two Railway cron containers from racing the same keeper key. */
+function acquireKeeperLock() {
+  const lockPath = String(process.env.KEEPER_LOCK_PATH || "/data/keeper.lock").trim();
+  const staleMs = Number(process.env.KEEPER_LOCK_STALE_MS || String(15 * 60 * 1000));
+  try {
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    if (fs.existsSync(lockPath)) {
+      const age = Date.now() - fs.statSync(lockPath).mtimeMs;
+      if (age < staleMs) {
+        const existing = fs.readFileSync(lockPath, "utf8").trim();
+        throw new Error(
+          `keeper lock held (${lockPath}) age=${Math.round(age / 1000)}s by ${existing || "unknown"}. ` +
+            `Another keeper is running with the same key — pause duplicate Railway services/crons.`,
+        );
+      }
+      console.log("keeper lock stale — taking over", { lockPath, ageMs: age });
+    }
+    fs.writeFileSync(lockPath, `${process.pid}:${new Date().toISOString()}`);
+    return () => {
+      try {
+        if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
+      } catch {
+        // ignore
+      }
+    };
+  } catch (e) {
+    if (String(e?.message || e).includes("keeper lock held")) throw e;
+    console.log("keeper lock skipped:", String(e?.message || e));
+    return () => {};
+  }
+}
+
 export async function run() {
+  const releaseLock = acquireKeeperLock();
+  try {
+    return await runLocked();
+  } finally {
+    releaseLock();
+  }
+}
+
+async function runLocked() {
   const transport = makeTransport();
-  const account = privateKeyToAccount(key());
+  const account = privateKeyToAccount({
+    privateKey: key(),
+    nonceManager,
+  });
   const publicClient = createPublicClient({ chain: robinhood, transport });
   const wallet = createWalletClient({ account, chain: robinhood, transport });
 
@@ -697,7 +744,11 @@ export async function run() {
 
 console.log("devpayout-keeper", new Date().toISOString());
 
-run().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only auto-run when this file is the process entrypoint.
+// run-all.js imports `run` — must not start a second concurrent keeper (nonce races).
+if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+  run().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
