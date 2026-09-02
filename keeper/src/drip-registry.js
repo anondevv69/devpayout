@@ -40,8 +40,10 @@ export function getDrip(idOrToken) {
   const key = String(idOrToken || "").trim().toLowerCase();
   const { drips } = loadRegistry();
   return (
-    drips.find((d) => d.id === key) ||
+    drips.find((d) => String(d.id || "").toLowerCase() === key) ||
     drips.find((d) => d.memeToken?.toLowerCase() === key) ||
+    drips.find((d) => d.router?.toLowerCase() === key) ||
+    drips.find((d) => d.distributor?.toLowerCase() === key) ||
     null
   );
 }
@@ -49,9 +51,11 @@ export function getDrip(idOrToken) {
 export function upsertDrip(partial) {
   const registry = loadRegistry();
   const memeToken = getAddress(partial.memeToken);
-  const id = partial.id || `drip-${memeToken.slice(2, 10)}`;
+  const id = String(partial.id || `drip-${memeToken.slice(2, 10)}`).toLowerCase();
   const idx = registry.drips.findIndex(
-    (d) => d.id === id || d.memeToken?.toLowerCase() === memeToken.toLowerCase(),
+    (d) =>
+      String(d.id || "").toLowerCase() === id ||
+      d.memeToken?.toLowerCase() === memeToken.toLowerCase(),
   );
   const row = {
     id,
@@ -74,7 +78,7 @@ export function upsertDrip(partial) {
     registry.drips.push(row);
   }
   saveRegistry(registry);
-  return getDrip(id);
+  return registry.drips.find((d) => String(d.id || "").toLowerCase() === id) || row;
 }
 
 export function setAutomated(idOrToken, automated = true) {
