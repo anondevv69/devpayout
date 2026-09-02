@@ -45,6 +45,9 @@ Keeper now prepares a Robinscan snapshot before resume so rebuild can succeed wh
 
 ## Deploy factory
 
+**Live (Robinhood 4663):** `DRIP_FACTORY=0x5B5ade0E3b38842f1758DE629F0Cd35AF647fC28`  
+Owner / treasury `0x374d…`, keeper `0x6eb0…`, fee **1000** bps.
+
 ```bash
 export ROBINHOOD_RPC_URL=https://rpc.mainnet.chain.robinhood.com
 export DEPLOYER_KEY=0x...
@@ -57,7 +60,7 @@ forge script script/DeployDripFactory.s.sol \
   --broadcast --private-key $DEPLOYER_KEY --skip-simulation --slow
 ```
 
-Then:
+Permissionless create (or via API when `FACTORY_CALLER_KEY` is set):
 
 ```bash
 cast send $DRIP_FACTORY "createDrip(address,address)" $MEME $PAIRED \
@@ -69,7 +72,7 @@ cast send $DRIP_FACTORY "createDrip(address,address)" $MEME $PAIRED \
 ```bash
 SERVICE=api npm run start:api
 # GET  /v1/platform
-# POST /v1/drips          { memeToken, pairedToken, router, distributor, ... }
+# POST /v1/drips          { memeToken, pairedToken }  → auto createDrip when factory live
 # POST /v1/drips/:id/test
 # POST /v1/drips/:id/automate { currentBeneficiary }
 ```
@@ -78,7 +81,7 @@ SERVICE=api npm run start:api
 
 | Service | Env | Cron |
 |---|---|---|
-| **api** | `SERVICE=api` | none (web) |
+| **api** (`gleaming-freedom`) | `SERVICE=api`, `DRIP_FACTORY=0x5B5ade…` (or code default), **`FACTORY_CALLER_KEY`** (gas for `createDrip`) | none (web) |
 | **keeper** | `SERVICE=keeper`, `DRIP_MODE=all`, `KEEPER_KEY`, volume `/data` | `*/30 * * * *` |
 
 Seed registry: copy `keeper/fixtures/drips.example.json` → `/data/drips.json` on the volume.

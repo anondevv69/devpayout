@@ -51,8 +51,11 @@ function callerKey() {
   return raw.startsWith("0x") ? raw : `0x${raw}`;
 }
 
+/** Robinhood mainnet DripFactory (DeployDripFactory.s.sol). Override with DRIP_FACTORY. */
+const DEFAULT_DRIP_FACTORY = "0x5B5ade0E3b38842f1758DE629F0Cd35AF647fC28";
+
 export function factoryAddress() {
-  const raw = String(process.env.DRIP_FACTORY || "").trim();
+  const raw = String(process.env.DRIP_FACTORY || DEFAULT_DRIP_FACTORY || "").trim();
   return raw ? getAddress(raw) : null;
 }
 
